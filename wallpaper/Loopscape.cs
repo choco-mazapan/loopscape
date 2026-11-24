@@ -1,0 +1,1979 @@
+﻿// Loopscape - tiny launcher that plays a looping video as the desktop wallpaper via mpv.
+// - Attaches mpv behind the desktop icons (Windows 11 24H2+ layout and the older WorkerW layout)
+// - On battery: switches straight to a still wallpaper and closes mpv entirely (zero cost)
+// - Plugged in: starts mpv showing that same wallpaper and crossfades into the video
+// - Pauses while a window covers the whole screen (maximized / fullscreen)
+// - Re-attaches if Explorer restarts
+// - Tray icon: opens the widget Settings panel, skips or picks a wallpaper, quits
+// Build: build\build.ps1 (uses the C# compiler that ships with Windows). C# 5 syntax only.
+using System;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.IO.Pipes;
+using System.Net;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Collections.Generic;
+
+static class Loopscape
+{
+    // ---------------- Win32 ----------------
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string c, string n);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr p, IntPtr after, string c, string n);
+    [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, uint m, IntPtr w, IntPtr l, uint f, uint t, out IntPtr r);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
+    [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO mi);
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int v, int size);
+    [DllImport("kernel32.dll")] static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS s);
+
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+    [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
+    [StructLayout(LayoutKind.Sequential)] struct SYSTEM_POWER_STATUS { public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag; public int BatteryLifeTime, BatteryFullLifeTime; }
+
+    static string Cls(IntPtr h) { var s = new StringBuilder(256); GetClassName(h, s, 256); return s.ToString(); }
+
+    // ---------------- Config ----------------
+    // ExeDir: the program (Loopscape.exe, bundled mpv\, styles.json) - read-only, e.g. %LOCALAPPDATA%\Programs\Loopscape.
+    // Dir: our data (Loopscape.ini, styles\, loop.mp4, log, static.jpg) - always %USERPROFILE%\Loopscape.
+    static readonly string ExeDir = AppDomain.CurrentDomain.BaseDirectory;
+    static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Loopscape");
+    static Dictionary<string, string> Cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    static string Get(string k, string d) { string v; return Cfg.TryGetValue(k, out v) && v.Length > 0 ? v : d; }
+    static bool GetBool(string k, bool d) { string v = Get(k, d ? "true" : "false").ToLowerInvariant(); return v == "true" || v == "1" || v == "yes"; }
+    static int GetInt(string k, int d) { int v; return int.TryParse(Get(k, ""), out v) ? v : d; }
+
+    // The widgets' @Resources folder: Settings.inc (panel preferences), wallstyle.txt / wallstatus.txt (what we play),
+    // weathernow.txt (written by WeatherFetch.exe), wallnext.txt (touched to skip to the next style)
+    public static readonly string Res = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"Rainmeter\Skins\LaptopInfo\@Resources");
+
+    // Settings panel keys (Settings.inc) that override Loopscape.ini keys when set
+    static readonly string[][] PanelKeys = {
+        new[] { "WallExclude", "exclude" }, new[] { "WallRotateMinutes", "rotateMinutes" }, new[] { "WallNight", "nightMode" },
+        new[] { "WallWeather", "weatherMode" }, new[] { "WallOnBattery", "onBattery" }, new[] { "WallPauseCovered", "pauseWhenCovered" } };
+
+    static void ReadIni(string path, Dictionary<string, string> into)
+    {
+        if (!File.Exists(path)) return;
+        foreach (string raw in File.ReadAllLines(path))
+        {
+            string line = raw.Trim().TrimStart('\uFEFF');
+            if (line.Length == 0 || line.StartsWith(";") || line.StartsWith("#") || line.StartsWith("[")) continue;
+            int i = line.IndexOf('=');
+            if (i > 0) into[line.Substring(0, i).Trim()] = line.Substring(i + 1).Trim();
+        }
+    }
+
+    static void LoadConfig()
+    {
+        Cfg.Clear();
+        ReadIni(Path.Combine(Dir, "Loopscape.ini"), Cfg);
+        var panel = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try { ReadIni(Path.Combine(Res, "Settings.inc"), panel); } catch { }
+        foreach (var k in PanelKeys)
+        {
+            string v;
+            if (panel.TryGetValue(k[0], out v) && v.Length > 0) Cfg[k[1]] = v;
+        }
+        // The style picked in the panel / tray (Settings.inc WallpaperMode) wins over Loopscape.ini: a single style, or
+        // "rotate". A style that isn't on disk yet is still chosen: CurrentVideo() downloads it and plays something else
+        // meanwhile.
+        string mode;
+        if (panel.TryGetValue("WallpaperMode", out mode)) ApplyMode(mode.Trim().ToLowerInvariant());
+        // "Still image" picked in the panel: use the rendered stills (or each style's own first frame)
+        if (Get("onBattery", "") == "static" && Get("batteryStills", "").Length == 0 && panel.ContainsKey("WallOnBattery"))
+        {
+            string pics = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Loopscape Stills");
+            Cfg["batteryStills"] = Directory.Exists(pics) ? pics : Path.Combine(Dir, "styles");
+        }
+    }
+
+    // Every style Loopscape knows (bundled, or downloadable via styles.json), split into day and night
+    static List<string> KnownStyles(bool night)
+    {
+        var dark = new HashSet<string>(DarkStyles, StringComparer.OrdinalIgnoreCase);
+        var names = new List<string>();
+        foreach (string n in Names.Keys) if (dark.Contains(n) == night) names.Add(n);
+        return names;
+    }
+
+    // mode: "rotate" (day styles by day, night styles at night) or one style name ("gradient" = loop.mp4)
+    static void ApplyMode(string mode)
+    {
+        if (mode.Length == 0 || mode.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return;
+        if (mode == "rotate")
+        {
+            // keep a hand-written rotation from Loopscape.ini; otherwise every style on this PC
+            // (only styles on disk play: StyleList skips the others)
+            if (Get("rotate", "").Length == 0)
+            {
+                Cfg["rotate"] = string.Join(",", KnownStyles(false).ToArray());
+                Cfg["rotateDark"] = string.Join(",", KnownStyles(true).ToArray());
+            }
+            return;
+        }
+        Cfg["video"] = mode == "gradient" ? Path.Combine(Dir, "loop.mp4") : Path.Combine(Dir, "styles", mode + ".mp4");
+        Cfg["rotate"] = "";
+    }
+
+    // Changes when Loopscape.ini or the panel's Settings.inc is saved
+    static long ConfigStamp()
+    {
+        long s = 0;
+        foreach (string p in new[] { Path.Combine(Dir, "Loopscape.ini"), Path.Combine(Res, "Settings.inc") })
+            try { if (File.Exists(p)) s = s * 31 + File.GetLastWriteTimeUtc(p).Ticks; } catch { }
+        return s;
+    }
+
+    const string PipeName = "loopscape";
+    static void Log(string msg)
+    {
+        try { File.AppendAllText(Path.Combine(Dir, "Loopscape.log"), DateTime.Now.ToString("s") + " " + msg + Environment.NewLine); } catch { }
+    }
+
+    // ---------------- Desktop attach ----------------
+    // Returns the window mpv should render into (behind the icons), or IntPtr.Zero.
+    static IntPtr FindWallpaperHost()
+    {
+        IntPtr progman = FindWindow("Progman", null);
+        if (progman == IntPtr.Zero) return IntPtr.Zero;
+        IntPtr r;
+        // Ask Explorer to create the WorkerW wallpaper layer
+        SendMessageTimeout(progman, 0x052C, new IntPtr(0xD), new IntPtr(1), 0, 1000, out r);
+        SendMessageTimeout(progman, 0x052C, IntPtr.Zero, IntPtr.Zero, 0, 1000, out r);
+
+        // Windows 11 24H2+: WorkerW is a child of Progman, below SHELLDLL_DefView. After a wallpaper change Explorer can
+        // leave a hidden WorkerW next to the live one; attaching to that plays the video where nobody can see it.
+        IntPtr child = IntPtr.Zero, hiddenChild = IntPtr.Zero;
+        while ((child = FindWindowEx(progman, child, "WorkerW", null)) != IntPtr.Zero)
+        {
+            if (IsWindowVisible(child)) return child;
+            if (hiddenChild == IntPtr.Zero) hiddenChild = child;
+        }
+        if (hiddenChild != IntPtr.Zero) { Log("only a hidden WorkerW found; using it"); return hiddenChild; }
+
+        // Older layout: the top-level WorkerW right after the one holding SHELLDLL_DefView
+        IntPtr found = IntPtr.Zero;
+        EnumWindows(delegate (IntPtr h, IntPtr l)
+        {
+            if (FindWindowEx(h, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero)
+                found = FindWindowEx(IntPtr.Zero, h, "WorkerW", null);
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    // ---------------- mpv ----------------
+    static Process Mpv;
+    static DateTime MpvStarted;
+
+    // The video can be "playing" yet invisible: its host WorkerW got hidden, or mpv's window never attached to it
+    static bool HostProblem(IntPtr host)
+    {
+        if (host == IntPtr.Zero || !IsWindow(host)) return true;
+        if (!IsWindowVisible(host)) { Log("wallpaper host hidden; re-attaching"); return true; }
+        if ((DateTime.Now - MpvStarted).TotalSeconds > 8 && FindWindowEx(host, IntPtr.Zero, "mpv", null) == IntPtr.Zero)
+        { Log("mpv window not inside the wallpaper host; re-attaching"); return true; }
+        return false;
+    }
+    static bool MpvRunning { get { try { return Mpv != null && !Mpv.HasExited; } catch { return false; } } }
+
+    static string FindMpv()
+    {
+        string cfg = Get("mpv", "");
+        if (cfg.Length > 0 && File.Exists(cfg)) return cfg;
+        string[] candidates = {
+            Path.Combine(ExeDir, "mpv", "mpv.exe"),   // bundled by the installer
+            Path.Combine(ExeDir, "mpv.exe"),
+            Path.Combine(Dir, "mpv.exe"),
+            @"C:\Program Files\MPV Player\mpv.exe",
+            @"C:\Program Files\mpv\mpv.exe",
+        };
+        foreach (string c in candidates) if (File.Exists(c)) return c;
+        return "mpv.exe"; // rely on PATH
+    }
+
+    // Copies the current Windows wallpaper next to us as static.jpg (what the crossfade blends with)
+    static bool PrepareStatic()
+    {
+        try
+        {
+            string src = Environment.ExpandEnvironmentVariables(@"%APPDATA%\Microsoft\Windows\Themes\TranscodedWallpaper");
+            if (!File.Exists(src)) return false;
+            File.Copy(src, Path.Combine(Dir, "static.jpg"), true);
+            return true;
+        }
+        catch (Exception e) { Log("static copy failed: " + e.Message); return false; }
+    }
+
+    static string Num(double d) { return d.ToString("0.###", CultureInfo.InvariantCulture); }
+
+    // Video filter that blends the static wallpaper (fill-cropped to the screen) over the video.
+    // opacity 1 = only the wallpaper, 0 = only the video.
+    static string BlendFilter(double opacity) { return BlendFilter("static.jpg", opacity); }
+    static string BlendFilter(string image, double opacity)
+    {
+        int w = GetSystemMetrics(0), h = GetSystemMetrics(1);
+        string size = w + ":" + h;
+        return "@xf:lavfi=[movie=" + image + ",scale=" + size + ":force_original_aspect_ratio=increase,crop=" + size +
+               ",scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[s];" +
+               "[in]hwdownload,format=nv12,scale=" + size + ",format=yuv420p[v];" +
+               "[s][v]blend=all_mode=normal:all_opacity=" + Num(opacity) + ":shortest=0:repeatlast=1[out]]";
+    }
+
+    static void StartMpv(IntPtr host, bool startOnWallpaper)
+    {
+        StopMpv();
+        string video = CurrentVideo();
+        Playing = video;
+        string args = "--wid=" + host.ToInt64() +
+                      " --loop-file=inf --no-audio --no-osc --no-input-default-bindings --input-cursor=no" +
+                      " --hwdec=auto-safe --panscan=1.0 --really-quiet --idle=no" +
+                      " --input-ipc-server=\\\\.\\pipe\\" + PipeName;
+        if (startOnWallpaper) args += " \"--vf=" + BlendFilter(1) + "\"";
+        args += " " + Get("mpvArgs", "") + " \"" + video + "\"";
+        var psi = new ProcessStartInfo(FindMpv(), args);
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.WorkingDirectory = Dir; // so the filter finds static.jpg
+        Mpv = Process.Start(psi);
+        MpvStarted = DateTime.Now;
+        LastPaused = null;
+        Log("started mpv pid=" + Mpv.Id + " host=" + host + (startOnWallpaper ? " (fade in)" : ""));
+    }
+
+    // ---------------- Rotation ----------------
+    static string playing;
+    // Setting Playing also tells the widgets which style is on screen (@Resources\wallstyle.txt), so they can move to
+    // that style's recommended spot (Settings > Move widgets with wallpaper).
+    static string Playing
+    {
+        get { return playing; }
+        set { playing = value; PublishStyle(value, publishFadeMs); publishFadeMs = 0; }
+    }
+    // Length of the crossfade that is about to show the new style (0 = it appears at once). Written as the second line
+    // of wallstyle.txt ("fade=<ms>") so the widgets fade out, move while the wallpapers blend, and fade back in.
+    static int publishFadeMs;
+    static string lastPublished;
+    static void PublishStyle(string video, int fadeMs)
+    {
+        try
+        {
+            string name = string.IsNullOrEmpty(video) ? "" : Path.GetFileNameWithoutExtension(video).ToLowerInvariant();
+            if (name == lastPublished) return;
+            string res = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"Rainmeter\Skins\LaptopInfo\@Resources");
+            if (!Directory.Exists(res)) return;
+            File.WriteAllText(Path.Combine(res, "wallstyle.txt"), name + "\nfade=" + Math.Max(0, fadeMs) + "\n");
+            lastPublished = name;
+            WidgetThemes.Push("PlaceNow()");   // widgets move (or start their fade) now, not on their next 1 s read
+        }
+        catch (Exception e) { Log("wallstyle.txt: " + e.Message); }
+    }
+
+    // rotate=a,b,c (style names from .\styles or full paths) switches every rotateMinutes,
+    // aligned to the clock (60 = on the hour). Empty rotate = always play 'video'.
+    // rotateDark=x,y (optional) replaces the rotate list between darkFrom and darkTo (HH:mm, may wrap past midnight).
+    // exclude=a,b (Settings panel: right-click a style) leaves styles out of the rotation. If that would empty a list,
+    // the exclusions are ignored for it.
+    static string StyleName(string path) { return Path.GetFileNameWithoutExtension(path).ToLowerInvariant(); }
+    static HashSet<string> Excluded()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string s in Get("exclude", "").Split(new[] { ',', ';', '|' }, StringSplitOptions.RemoveEmptyEntries)) set.Add(s.Trim());
+        return set;
+    }
+    static List<string> StyleList(string key) { return StyleList(key, true); }
+    static List<string> StyleList(string key, bool applyExclude)
+    {
+        var vids = new List<string>();
+        foreach (string item in Get(key, "").Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string s = Environment.ExpandEnvironmentVariables(item.Trim());
+            if (s.Length == 0) continue;
+            string p = File.Exists(s) ? s : Path.Combine(Dir, "styles", s + ".mp4");
+            if (File.Exists(p)) vids.Add(p);
+        }
+        if (!applyExclude) return vids;
+        var ex = Excluded();
+        var kept = vids.FindAll(delegate (string p) { return !ex.Contains(StyleName(p)); });
+        return kept.Count > 0 ? kept : vids;
+    }
+
+    // ----- weather (weathernow.txt from WeatherFetch.exe: date, fetched, code, isday, sunrise, sunset, sunrise2) -----
+    static Dictionary<string, string> weather = new Dictionary<string, string>();
+    static DateTime weatherStamp = DateTime.MinValue;
+    static Dictionary<string, string> Weather()
+    {
+        string f = Path.Combine(Res, "weathernow.txt");
+        try
+        {
+            DateTime s = File.Exists(f) ? File.GetLastWriteTimeUtc(f) : DateTime.MinValue;
+            if (s != weatherStamp)
+            {
+                weatherStamp = s;
+                var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (File.Exists(f)) ReadIni(f, d);
+                weather = d;
+            }
+        }
+        catch { }
+        return weather;
+    }
+    static double WeatherAgeMinutes()
+    {
+        string v; DateTime t;
+        if (!Weather().TryGetValue("fetched", out v) || !DateTime.TryParse(v, CultureInfo.InvariantCulture, DateTimeStyles.None, out t)) return 1e9;
+        return (DateTime.Now - t).TotalMinutes;
+    }
+    static bool TimeKey(string key, out TimeSpan t)
+    {
+        string v; t = TimeSpan.Zero;
+        return Weather().TryGetValue(key, out v) && TimeSpan.TryParse(v, CultureInfo.InvariantCulture, out t);
+    }
+
+    // Night window: nightMode=sun uses today's sunset and sunrise (from the weather helper, at most 3 days old);
+    // otherwise (or without sun times) darkFrom..darkTo.
+    static bool DarkWindow(out TimeSpan from, out TimeSpan to, out bool sun)
+    {
+        sun = false;
+        if (Get("nightMode", "fixed").ToLowerInvariant() == "sun" && WeatherAgeMinutes() < 3 * 24 * 60 &&
+            TimeKey("sunset", out from) && TimeKey("sunrise", out to) && from != to) { sun = true; return true; }
+        return TimeSpan.TryParse(Get("darkFrom", "19:00"), CultureInfo.InvariantCulture, out from) &
+               TimeSpan.TryParse(Get("darkTo", "07:00"), CultureInfo.InvariantCulture, out to) && from != to;
+    }
+    static bool IsDarkTime()
+    {
+        TimeSpan from, to; bool sun;
+        if (!DarkWindow(out from, out to, out sun)) return false;
+        TimeSpan now = DateTime.Now.TimeOfDay;
+        return from < to ? (now >= from && now < to) : (now >= from || now < to);
+    }
+    // Next time the day/night list flips, or null
+    static DateTime? NextDarkFlip()
+    {
+        TimeSpan from, to; bool sun;
+        if (!DarkWindow(out from, out to, out sun) || StyleList("rotateDark").Count == 0) return null;
+        DateTime now = DateTime.Now, best = DateTime.MaxValue;
+        foreach (TimeSpan t in new[] { from, to })
+            for (int d = 0; d <= 1; d++) { DateTime c = now.Date.AddDays(d) + t; if (c > now && c < best) best = c; }
+        return best == DateTime.MaxValue ? (DateTime?)null : best;
+    }
+
+    // weatherMode=1: rain/drizzle/showers/storms -> rain, a clear night -> moon, overcast/fog -> clouds (night or day).
+    // Only while rotating, only with a reading under 90 minutes old, and never a style left out of the rotation.
+    static string WeatherStyle(bool dark, out string why)
+    {
+        why = null;
+        if (!GetBool("weatherMode", false) || WeatherAgeMinutes() > 90) return null;
+        string v; int code;
+        if (!Weather().TryGetValue("code", out v) || !int.TryParse(v, out code)) return null;
+        string style = null;
+        if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95) { style = "rain"; why = code >= 95 ? "storm" : (code < 60 ? "drizzle" : "rain"); }
+        else if (dark && code <= 1) { style = "moon"; why = "clear night"; }
+        else if (code == 3 || code == 45 || code == 48) { style = dark ? "nightclouds" : "pixelclouds"; why = code == 3 ? "overcast" : "fog"; }
+        if (style == null || Excluded().Contains(style)) return null;
+        string p = Path.Combine(Dir, "styles", style + ".mp4");
+        return File.Exists(p) ? p : null;
+    }
+
+    // ----- skipping (Win+Alt+N, a widget's "Next wallpaper", the panel's Skip button) -----
+    static long skipOffset = ReadSkip();
+    static long weatherSkippedSlot = -1;
+    static long ReadSkip() { try { long v; return long.TryParse(File.ReadAllText(Path.Combine(Dir, "skip.txt")).Trim(), out v) ? v : 0; } catch { return 0; } }
+
+    static string Reason = "", NextChange = "";
+    static string CurrentVideo() { long slot; int count; return CurrentVideo(out slot, out count); }
+    // slot = rotation step number (changes every rotateMinutes), count = styles in the active list (1 = no rotation)
+    static string CurrentVideo(out long slot, out int count)
+    {
+        int minutes = Math.Max(1, GetInt("rotateMinutes", 60));
+        DateTime epoch = new DateTime(2000, 1, 1);
+        slot = (long)Math.Floor((DateTime.Now - epoch).TotalMinutes / minutes);
+        count = 1;
+        string single = Environment.ExpandEnvironmentVariables(Get("video", Path.Combine(Dir, "loop.mp4")));
+        var vids = StyleList("rotate");
+        if (vids.Count == 0) { Reason = "One style"; NextChange = ""; return Available(single); }
+        bool dark = IsDarkTime();
+        bool sun; TimeSpan f, t; DarkWindow(out f, out t, out sun);
+        Reason = dark ? "Night rotation" : "Day rotation";
+        if (dark)
+        {
+            var darkList = StyleList("rotateDark");
+            if (darkList.Count > 0) vids = darkList; else Reason = "Rotation";
+        }
+        else if (StyleList("rotateDark").Count == 0) Reason = "Rotation";
+        DateTime next = epoch.AddMinutes((slot + 1) * (double)minutes);
+        DateTime? flip = NextDarkFlip();
+        if (flip.HasValue && flip.Value < next) next = flip.Value;
+        NextChange = next.ToString("HH:mm", CultureInfo.InvariantCulture) + (flip.HasValue && flip.Value == next ? (dark ? (sun ? " (sunrise)" : " (day)") : (sun ? " (sunset)" : " (night)")) : "");
+        count = vids.Count;
+        string why = null;
+        string w = weatherSkippedSlot == slot ? null : WeatherStyle(dark, out why);
+        if (w != null) { Reason = "Weather: " + why; return w; }
+        return vids[(int)(((slot + skipOffset) % vids.Count + vids.Count) % vids.Count)];
+    }
+
+    // The chosen video if it's on disk. If not, ask for it to be downloaded (when styles.json lists it) and keep playing
+    // what is on screen now, or loop.mp4, or any style on disk, until it arrives.
+    static string Available(string video)
+    {
+        if (File.Exists(video)) return video;
+        string name = StyleName(video);
+        if (StyleDownloads.Request(name)) Reason = "Downloading " + Pretty(name);
+        if (!string.IsNullOrEmpty(Playing) && File.Exists(Playing)) return Playing;
+        string loop = Path.Combine(Dir, "loop.mp4");
+        if (File.Exists(loop)) return loop;
+        try { foreach (string f in Directory.GetFiles(Path.Combine(Dir, "styles"), "*.mp4")) return f; } catch { }
+        return video;
+    }
+
+    // Skip to the next style: in a rotation move one step on (or drop a weather pick); with one style, play the next
+    // style of the same kind (day or night) and save it as the chosen style.
+    static void Next()
+    {
+        long slot; int count;
+        string cur = CurrentVideo(out slot, out count);
+        if (StyleList("rotate").Count > 0)
+        {
+            if (Reason.StartsWith("Weather")) weatherSkippedSlot = slot;
+            else
+            {
+                skipOffset++;
+                try { File.WriteAllText(Path.Combine(Dir, "skip.txt"), skipOffset.ToString(CultureInfo.InvariantCulture)); } catch { }
+            }
+            Log("skip: next style in the rotation");
+            return;
+        }
+        var darkNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string p in StyleList("rotateDark", false)) darkNames.Add(StyleName(p));
+        string name = StyleName(cur);
+        bool isDark = darkNames.Contains(name);
+        var ex = Excluded();
+        var group = new List<string>();
+        foreach (string p in Directory.GetFiles(Path.Combine(Dir, "styles"), "*.mp4"))
+            if (darkNames.Contains(StyleName(p)) == isDark && (!ex.Contains(StyleName(p)) || StyleName(p) == name)) group.Add(p);
+        group.Sort(StringComparer.OrdinalIgnoreCase);
+        if (group.Count < 2) return;
+        int i = group.FindIndex(delegate (string p) { return StyleName(p) == name; });
+        string nextVid = group[(i + 1) % group.Count];
+        SetLine(Path.Combine(Dir, "Loopscape.ini"), "video", nextVid, true);
+        SetLine(Path.Combine(Res, "Settings.inc"), "WallpaperMode", StyleName(nextVid), false);
+        Log("skip: " + StyleName(nextVid));
+    }
+
+    // Replaces key=value in a simple ini file (adds it if missing), keeping its encoding style
+    static void SetLine(string path, string key, string value, bool bom)
+    {
+        try
+        {
+            if (!File.Exists(path)) return;
+            var lines = new List<string>(File.ReadAllLines(path));
+            bool done = false;
+            for (int i = 0; i < lines.Count; i++)
+                if (lines[i].TrimStart('﻿').StartsWith(key + "=", StringComparison.OrdinalIgnoreCase)) { lines[i] = key + "=" + value; done = true; }
+            if (!done) lines.Add(key + "=" + value);
+            File.WriteAllText(path, string.Join("\r\n", lines.ToArray()) + "\r\n", new UTF8Encoding(bom));
+        }
+        catch (Exception e) { Log("could not update " + path + ": " + e.Message); }
+    }
+
+    // @Resources\wallstatus.txt for the Settings panel's "Playing now"
+    static string lastStatus;
+    static void PublishStatus(bool battery, string onBattery, bool covered)
+    {
+        try
+        {
+            if (!Directory.Exists(Res)) return;
+            CurrentVideo();
+            string state = battery ? (onBattery == "pause" ? "paused (on battery)" : onBattery == "static" ? "still image (on battery)" : "")
+                                   : (covered ? "paused (window covers the desktop)" : "");
+            string dl = StyleDownloads.Status();   // e.g. "downloading Aurora 42%" or "download failed: Aurora"
+            if (dl.Length > 0) state = state.Length > 0 ? dl + "; " + state : dl;
+            string text = "style=" + (string.IsNullOrEmpty(Playing) ? "" : StyleName(Playing)) + "\r\nreason=" + Reason +
+                          "\r\nnext=" + NextChange + "\r\nstate=" + state + "\r\n";
+            if (text == lastStatus) return;
+            File.WriteAllText(Path.Combine(Res, "wallstatus.txt"), text);
+            lastStatus = text;
+        }
+        catch { }
+    }
+
+    // ----- global hotkey (nextHotkey=win+alt+n; empty = none) -----
+    [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
+    [DllImport("user32.dll")] static extern int GetMessage(out MSG m, IntPtr h, uint min, uint max);
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public int x, y; }
+    static volatile bool nextRequested;
+    static void StartHotkey()
+    {
+        string spec = Get("nextHotkey", "win+alt+n").ToLowerInvariant();
+        if (spec == "none" || spec.Length == 0) return;
+        uint mods = 0x4000 /*MOD_NOREPEAT*/, vk = 0;
+        foreach (string part in spec.Split('+'))
+        {
+            string p = part.Trim();
+            if (p == "ctrl" || p == "control") mods |= 2; else if (p == "alt") mods |= 1; else if (p == "shift") mods |= 4;
+            else if (p == "win") mods |= 8;
+            else if (p.Length == 1) vk = (uint)char.ToUpperInvariant(p[0]);
+            else if (p.StartsWith("f")) { int n; if (int.TryParse(p.Substring(1), out n) && n >= 1 && n <= 24) vk = (uint)(0x6F + n); }
+        }
+        if (vk == 0) { Log("nextHotkey: can't read '" + spec + "'"); return; }
+        var t = new Thread(delegate ()
+        {
+            if (!RegisterHotKey(IntPtr.Zero, 1, mods, vk)) { Log("nextHotkey " + spec + " is taken by another app"); return; }
+            Log("next-style hotkey: " + spec);
+            MSG m;
+            while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0)
+                if (m.message == 0x0312 /*WM_HOTKEY*/) nextRequested = true;
+        });
+        t.IsBackground = true;
+        t.Start();
+    }
+    static DateTime NextFileStamp()
+    {
+        try { string f = Path.Combine(Res, "wallnext.txt"); return File.Exists(f) ? File.GetLastWriteTimeUtc(f) : DateTime.MinValue; }
+        catch { return DateTime.MinValue; }
+    }
+
+    // ---------------- Battery stills ----------------
+    // batteryStills=<folder> of "<style>-N.png" (make-stills.ps1). On battery the Windows wallpaper follows the same
+    // rotation as the video, using a still of the current style; each time a style comes round again it shows its next
+    // variant. Falls back to the style's own first frame (styles\<style>.png). Empty = leave the wallpaper alone.
+    static string LastStill;
+
+    static string CurrentStill()
+    {
+        string folder = Environment.ExpandEnvironmentVariables(Get("batteryStills", ""));
+        if (folder.Length == 0) return null;
+        long slot; int count;
+        string video = CurrentVideo(out slot, out count);
+        string name = Path.GetFileNameWithoutExtension(video);
+        var list = new List<string>();
+        try { if (Directory.Exists(folder)) list.AddRange(Directory.GetFiles(folder, name + "-*.png")); } catch { }
+        list.Sort(StringComparer.OrdinalIgnoreCase);
+        if (list.Count == 0)
+        {
+            string own = Path.ChangeExtension(video, ".png");
+            if (File.Exists(own)) list.Add(own);
+        }
+        if (list.Count == 0) return null;
+        return list[(int)((slot / Math.Max(1, count)) % list.Count)];
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool SystemParametersInfo(int action, int param, string value, int flags);
+
+    static void SetWindowsWallpaper(string path)
+    {
+        try
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop", true))
+            {
+                k.SetValue("WallpaperStyle", "10");   // Fill
+                k.SetValue("TileWallpaper", "0");
+            }
+            if (SystemParametersInfo(0x14 /*SPI_SETDESKWALLPAPER*/, 0, path, 3)) Log("windows wallpaper: " + path);
+            else Log("setting windows wallpaper failed: " + path);
+        }
+        catch (Exception e) { Log("setting windows wallpaper failed: " + e.Message); }
+        LastStill = path;
+    }
+
+    static string CurrentWindowsWallpaper()
+    {
+        try { using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop")) return k.GetValue("WallPaper") as string; }
+        catch { return null; }
+    }
+
+    // On battery: switch the Windows wallpaper when the rotation moves on (no-op when it already shows the right still)
+    static void UpdateBatteryStill()
+    {
+        string want = CurrentStill();
+        if (want == null || string.Equals(want, LastStill, StringComparison.OrdinalIgnoreCase)) return;
+        if (string.Equals(want, CurrentWindowsWallpaper(), StringComparison.OrdinalIgnoreCase)) { LastStill = want; return; }
+        SetWindowsWallpaper(want);
+    }
+
+    // Live crossfade between two videos, both moving the whole time:
+    // the next video is loaded as the main (hardware-decoded) stream, and for this one file the current
+    // video keeps playing on top of it through a blend filter, picked up from where it was. Its opacity
+    // then ramps 1 -> 0 and the filter is dropped, leaving only the new video.
+    // manual = picked by the user (Loopscape.ini just changed): use the short manualFadeMs instead of switchFadeMs
+    // First frame (.png) of the style being crossfaded in, while a crossfade runs; null otherwise (WidgetThemes)
+    internal static volatile string IncomingStill;
+
+    static void SwitchTo(string next, bool fade, bool manual = false)
+    {
+        bool crossfaded = false;
+        IncomingStill = null;
+        string rel = fade ? RelativeToDir(Playing) : null;
+        if (rel != null)
+        {
+            int ms = manual ? Math.Max(200, GetInt("manualFadeMs", 1000)) : Math.Max(500, GetInt("switchFadeMs", 5000));
+            LastPaused = null; SetPaused(false);
+            double pos = GetNum("time-pos"), dur = GetNum("duration");
+            if (!double.IsNaN(pos) && !double.IsNaN(dur) && dur > 0)
+            {
+                // Don't start a crossfade that would run past the end of the current loop
+                double need = ms / 1000.0 + 1.0;
+                if (dur - pos < need)
+                {
+                    Thread.Sleep((int)((dur - pos + 0.3) * 1000));
+                    pos = GetNum("time-pos");
+                    if (double.IsNaN(pos)) pos = 0;
+                }
+                double seek = Math.Max(0, pos + 0.25); // ~time mpv takes to open the next file
+                int w = GetSystemMetrics(0), h = GetSystemMetrics(1);
+                string size = w + ":" + h;
+                string graph = "@xf:lavfi=[movie=" + rel + ":seek_point=" + Num(seek) + ",setpts=PTS-STARTPTS," +
+                               "scale=" + size + ":force_original_aspect_ratio=increase,crop=" + size + ",format=yuv420p[s];" +
+                               "[in]hwdownload,format=nv12,scale=" + size + ",format=yuv420p[v];" +
+                               "[s][v]blend=all_mode=normal:all_opacity=1:shortest=0:repeatlast=1[out]]";
+                string opt = "vf=%" + Encoding.UTF8.GetByteCount(graph) + "%" + graph;
+                if (Ok(Cmd("{\"command\":[\"loadfile\"," + Q(next) + ",\"replace\",-1," + Q(opt) + "]}")))
+                {
+                    publishFadeMs = ms + 400;   // the ramp below starts ~0.4 s after this
+                    // widgets moving for this style get their colours from its first frame (the new video starts
+                    // there), since the screen shows a blend of both until the fade ends
+                    string still = Path.ChangeExtension(next, ".png");
+                    IncomingStill = File.Exists(still) ? still : null;
+                    Playing = next;
+                    WidgetThemes.Kick(800);     // sample right away for the widgets' destinations (moveto.txt)
+                    Thread.Sleep(300);          // let the old file's frame counter reset
+                    WaitForFrames(2, 5000);
+                    crossfaded = Ramp(1, 0, ms);
+                    Thread.Sleep(150);
+                    RemoveFilter();
+                    IncomingStill = null;
+                }
+            }
+        }
+        if (!crossfaded && !string.Equals(Playing, next, StringComparison.OrdinalIgnoreCase))
+        {
+            // tell the widgets only once the new frame is on screen, so they move together with the wallpaper
+            LoadAndWaitForFrame(next, 2000);
+            Playing = next;
+        }
+        Log("switched to " + next + (crossfaded ? " (live crossfade)" : ""));
+        WidgetThemes.Kick();   // re-sample the widget backgrounds now instead of on the next 1-3 s poll
+    }
+
+    // loadfile, then wait (on the same pipe) for mpv's playback-restart event: the first frame of the new file is shown,
+    // paused or not
+    static void LoadAndWaitForFrame(string file, int timeoutMs)
+    {
+        try
+        {
+            using (var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut))
+            {
+                pipe.Connect(500);
+                var w = new StreamWriter(pipe); w.AutoFlush = true;
+                var r = new StreamReader(pipe);
+                w.Write("{\"command\":[\"loadfile\"," + Q(file) + ",\"replace\"]}\n");
+                var sw = Stopwatch.StartNew();
+                var read = r.ReadLineAsync();
+                while (sw.ElapsedMilliseconds < timeoutMs)
+                {
+                    if (!read.Wait(Math.Max(1, timeoutMs - (int)sw.ElapsedMilliseconds))) break;
+                    string line = read.Result;
+                    if (line == null || line.Contains("\"playback-restart\"")) break;
+                    read = r.ReadLineAsync();
+                }
+            }
+        }
+        catch (Exception e) { Log("load: " + e.Message); }
+    }
+
+    // Path relative to our folder with forward slashes (safe inside an ffmpeg filter string), or null
+    static string RelativeToDir(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        string full = Path.GetFullPath(path), dir = Path.GetFullPath(Dir);
+        if (!full.StartsWith(dir, StringComparison.OrdinalIgnoreCase)) return null;
+        string rel = full.Substring(dir.Length).TrimStart('\\').Replace('\\', '/');
+        foreach (char c in rel) if (c == ':' || c == '\'' || c == ',' || c == ';' || c == '[' || c == ']' || c == '%') return null;
+        return rel;
+    }
+
+    static double GetNum(string prop)
+    {
+        string r = Cmd("{\"command\":[\"get_property\",\"" + prop + "\"]}");
+        int i = r == null ? -1 : r.IndexOf("\"data\":", StringComparison.Ordinal);
+        if (i < 0) return double.NaN;
+        string rest = r.Substring(i + 7); int end = rest.IndexOfAny(new[] { ',', '}' });
+        double v;
+        return double.TryParse(rest.Substring(0, end < 0 ? rest.Length : end), NumberStyles.Float, CultureInfo.InvariantCulture, out v) ? v : double.NaN;
+    }
+
+    static void RemoveFilter() { Cmd("{\"command\":[\"vf\",\"remove\",\"@xf\"]}"); }
+
+    // Safety net: a blend filter should only exist during a fade. If one is left over, drop it.
+    static void RemoveStrayFilter()
+    {
+        string r = Cmd("{\"command\":[\"get_property\",\"vf\"]}");
+        if (r != null && r.Contains("\"label\":\"xf\"")) { Log("removing leftover blend filter"); RemoveFilter(); }
+    }
+
+    static void StopMpv()
+    {
+        try { if (Mpv != null && !Mpv.HasExited) { Mpv.Kill(); Mpv.WaitForExit(2000); } } catch { }
+        Mpv = null;
+    }
+
+    // An mpv left playing by an earlier Loopscape that was force-closed (or crashed) still serves our pipe and would
+    // keep playing behind the new one: ask whatever answers on the pipe to quit until nothing does.
+    static void QuitStrayMpv()
+    {
+        for (int i = 0; i < 10; i++)
+        {
+            try
+            {
+                using (var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut))
+                {
+                    pipe.Connect(300);
+                    var w = new StreamWriter(pipe); w.AutoFlush = true;
+                    w.Write("{\"command\":[\"quit\"]}\n");
+                }
+                Log("asked a leftover mpv to quit");
+                Thread.Sleep(500);
+            }
+            catch { return; }   // no pipe server: nothing left over
+        }
+    }
+
+    // Sends one JSON IPC command to mpv and returns its reply line (or null).
+    static string Cmd(string json)
+    {
+        try
+        {
+            using (var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut))
+            {
+                pipe.Connect(500);
+                var w = new StreamWriter(pipe); w.AutoFlush = true;
+                var r = new StreamReader(pipe);
+                w.Write(json + "\n");
+                for (int i = 0; i < 50; i++)
+                {
+                    string line = r.ReadLine();
+                    if (line == null) return null;
+                    if (line.IndexOf("\"event\"", StringComparison.Ordinal) < 0) return line;
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+    static bool Ok(string reply) { return reply != null && reply.Contains("\"error\":\"success\""); }
+    static string Q(string s) { return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""; }
+
+    static bool? LastPaused;
+    static void SetPaused(bool paused)
+    {
+        if (LastPaused.HasValue && LastPaused.Value == paused) return;
+        if (Ok(Cmd("{\"command\":[\"set_property\",\"pause\"," + (paused ? "true" : "false") + "]}")))
+            LastPaused = paused;
+    }
+
+    static bool WaitForFrames(int minFrames, int timeoutMs)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < timeoutMs && MpvRunning)
+        {
+            string r = Cmd("{\"command\":[\"get_property\",\"estimated-frame-number\"]}");
+            int i = r == null ? -1 : r.IndexOf("\"data\":", StringComparison.Ordinal);
+            if (i >= 0)
+            {
+                int n; string rest = r.Substring(i + 7); int end = rest.IndexOfAny(new[] { ',', '}' });
+                if (int.TryParse(rest.Substring(0, end < 0 ? rest.Length : end), out n) && n >= minFrames) return true;
+            }
+            Thread.Sleep(50);
+        }
+        return false;
+    }
+
+    // Animates the blend opacity from 'from' to 'to' with ease-in-out.
+    // Returns false (and stops early) if the filter isn't accepting commands, e.g. it failed to start.
+    static bool Ramp(double from, double to, int ms)
+    {
+        var sw = Stopwatch.StartNew();
+        int failures = 0;
+        while (true)
+        {
+            double t = Math.Min(1.0, sw.ElapsedMilliseconds / (double)Math.Max(1, ms));
+            double e = t * t * (3 - 2 * t);
+            if (!Ok(Cmd("{\"command\":[\"vf-command\",\"xf\",\"all_opacity\"," + Q(Num(from + (to - from) * e)) + ",\"blend\"]}")))
+            {
+                if (++failures >= 5) { Log("fade: blend filter not responding, dropping it"); return false; }
+            }
+            else failures = 0;
+            if (t >= 1.0) return true;
+            Thread.Sleep(33);
+        }
+    }
+
+    // mpv was started showing only the wallpaper: fade into the video, then drop the filter
+    static void FadeIn(int ms)
+    {
+        if (!WaitForFrames(3, 5000)) { Log("fade-in: mpv not ready"); }
+        LastPaused = null; SetPaused(false);
+        Ramp(1, 0, ms);
+        Thread.Sleep(150);
+        RemoveFilter();
+    }
+
+    // Unplugged: put the still in place as the Windows wallpaper (behind the video), then close mpv right away.
+    static void StopToStill()
+    {
+        string still = CurrentStill();
+        if (still != null)
+        {
+            if (!string.Equals(still, CurrentWindowsWallpaper(), StringComparison.OrdinalIgnoreCase)) SetWindowsWallpaper(still);
+            else LastStill = still;
+        }
+        StopMpv();
+    }
+
+    // ---------------- Conditions ----------------
+    static bool OnBattery()
+    {
+        // Testing aid: a file named force-power.txt containing "ac" or "battery" overrides the real state
+        try
+        {
+            string f = Path.Combine(Dir, "force-power.txt");
+            if (File.Exists(f)) { string v = File.ReadAllText(f).Trim().ToLowerInvariant(); if (v == "ac") return false; if (v == "battery") return true; }
+        }
+        catch { }
+        SYSTEM_POWER_STATUS s;
+        return GetSystemPowerStatus(out s) && s.ACLineStatus == 0;
+    }
+
+    static readonly HashSet<string> ShellClasses = new HashSet<string> {
+        "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "RainmeterMeterWindow",
+        "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow", "TopLevelWindowForOverflowXamlIsland"
+    };
+
+    // True when the foreground window hides the wallpaper (maximized or covering its monitor)
+    static bool DesktopCovered()
+    {
+        IntPtr fg = GetForegroundWindow();
+        if (fg == IntPtr.Zero || IsIconic(fg)) return false;
+        if (ShellClasses.Contains(Cls(fg))) return false;
+        int cloaked;
+        if (DwmGetWindowAttribute(fg, 14 /*DWMWA_CLOAKED*/, out cloaked, 4) == 0 && cloaked != 0) return false;
+        if (IsZoomed(fg)) return true;
+        RECT w; if (!GetWindowRect(fg, out w)) return false;
+        var mi = new MONITORINFO(); mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
+        if (!GetMonitorInfo(MonitorFromWindow(fg, 2), ref mi)) return false;
+        return w.L <= mi.rcMonitor.L && w.T <= mi.rcMonitor.T && w.R >= mi.rcMonitor.R && w.B >= mi.rcMonitor.B;
+    }
+
+    // ---------------- Tray icon (trayIcon=0 hides it) ----------------
+    // Left-click: widget Settings panel. Right-click menu: Settings, Next wallpaper, Change wallpaper
+    // (every style, with its still as a thumbnail), Quit. Picking a style does what the panel's tiles do.
+    static readonly string[] DarkStyles = { "nightclouds", "aurora", "nebula", "moon", "embers", "deepsea", "rain", "bounce" };
+    static readonly Dictionary<string, string> Names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+        { "spectrum", "Spectrum" }, { "halftone", "Halftone" }, { "bluesky", "Blue sky" }, { "pixelclouds", "Pixel clouds" },
+        { "sunset", "Sunset strata" }, { "riso", "Riso waves" }, { "dunes", "Dunes" }, { "lake", "Lake" }, { "pastel", "Pastel aurora" },
+        { "crt", "CRT test card" }, { "shore", "Shore" }, { "nightclouds", "Night clouds" }, { "aurora", "Aurora" }, { "nebula", "Nebula" },
+        { "moon", "Halftone moon" }, { "embers", "Embers" }, { "deepsea", "Deep sea" }, { "rain", "Rainy window" }, { "bounce", "Bouncing logo" } };
+    static string Pretty(string name)
+    {
+        string n; if (Names.TryGetValue(name, out n)) return n;
+        return name.Length == 0 ? name : char.ToUpperInvariant(name[0]) + name.Substring(1);
+    }
+    static System.Windows.Forms.NotifyIcon tray;
+    static void StartTray()
+    {
+        if (!GetBool("trayIcon", true)) return;
+        var t = new Thread(delegate ()
+        {
+            try
+            {
+                System.Windows.Forms.Application.EnableVisualStyles();
+                var menu = new System.Windows.Forms.ContextMenuStrip();
+                menu.Opening += delegate { BuildTrayMenu(menu); };
+                BuildTrayMenu(menu);
+                tray = new System.Windows.Forms.NotifyIcon();
+                try { tray.Icon = System.Drawing.Icon.ExtractAssociatedIcon(System.Reflection.Assembly.GetExecutingAssembly().Location); }
+                catch { tray.Icon = System.Drawing.SystemIcons.Application; }
+                tray.Text = "Loopscape";
+                tray.ContextMenuStrip = menu;
+                tray.MouseClick += delegate (object o, System.Windows.Forms.MouseEventArgs e)
+                {
+                    if (e.Button == System.Windows.Forms.MouseButtons.Left) OpenWidgetSettings();
+                };
+                tray.MouseMove += delegate { UpdateTrayTip(); };
+                tray.Visible = true;
+                AppDomain.CurrentDomain.ProcessExit += delegate { try { tray.Visible = false; tray.Dispose(); } catch { } };
+                Log("tray icon on");
+                System.Windows.Forms.Application.Run();
+            }
+            catch (Exception e) { Log("tray icon: " + e.Message); }
+        });
+        t.IsBackground = true;
+        t.SetApartmentState(ApartmentState.STA);
+        t.Start();
+    }
+    static void UpdateTrayTip()
+    {
+        try
+        {
+            string s = string.IsNullOrEmpty(Playing) ? "" : Pretty(StyleName(Playing));
+            string tip = s.Length > 0 ? "Loopscape - " + s : "Loopscape";
+            if (tip.Length > 63) tip = tip.Substring(0, 63);
+            if (tray.Text != tip) tray.Text = tip;
+        }
+        catch { }
+    }
+    static Dictionary<string, System.Drawing.Image> thumbs = new Dictionary<string, System.Drawing.Image>(StringComparer.OrdinalIgnoreCase);
+    static System.Drawing.Image Thumb(string name)
+    {
+        System.Drawing.Image img;
+        if (thumbs.TryGetValue(name, out img)) return img;
+        img = null;
+        try
+        {
+            string png = Path.Combine(Dir, "styles", name + ".png");
+            if (File.Exists(png))
+                using (var src = System.Drawing.Image.FromFile(png))
+                {
+                    var bmp = new System.Drawing.Bitmap(40, 24);
+                    using (var g = System.Drawing.Graphics.FromImage(bmp))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.DrawImage(src, 0, 0, 40, 24);
+                    }
+                    img = bmp;
+                }
+        }
+        catch { img = null; }
+        thumbs[name] = img;
+        return img;
+    }
+    static void BuildTrayMenu(System.Windows.Forms.ContextMenuStrip menu)
+    {
+        menu.Items.Clear();
+        menu.ImageScalingSize = new System.Drawing.Size(40, 24);
+        // what is chosen now: Loopscape.ini read fresh (Cfg belongs to the main loop)
+        var ini = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try { ReadIni(Path.Combine(Dir, "Loopscape.ini"), ini); } catch { }
+        var panel = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try { ReadIni(Path.Combine(Res, "Settings.inc"), panel); } catch { }
+        string v, mode = panel.TryGetValue("WallpaperMode", out v) ? v.Trim().ToLowerInvariant() : "";
+        bool rotating = mode.Length > 0 ? mode == "rotate" : (ini.TryGetValue("rotate", out v) && v.Trim().Length > 0);
+        string single = mode.Length > 0 && mode != "rotate" ? mode
+                      : ini.TryGetValue("video", out v) ? StyleName(Environment.ExpandEnvironmentVariables(v)) : "";
+        string playing = string.IsNullOrEmpty(Playing) ? "" : StyleName(Playing);
+
+        var settings = new System.Windows.Forms.ToolStripMenuItem("Widget settings...");
+        settings.Font = new System.Drawing.Font(settings.Font, System.Drawing.FontStyle.Bold);
+        settings.Click += delegate { OpenWidgetSettings(); };
+        menu.Items.Add(settings);
+        var next = new System.Windows.Forms.ToolStripMenuItem("Next wallpaper");
+        string hk = ini.TryGetValue("nextHotkey", out v) ? v.Trim() : "win+alt+n";
+        if (hk.Length > 0 && hk != "none") next.ShortcutKeyDisplayString = HotkeyLabel(hk);
+        next.Click += delegate { nextRequested = true; };
+        menu.Items.Add(next);
+
+        var change = new System.Windows.Forms.ToolStripMenuItem("Change wallpaper");
+        change.DropDown.ImageScalingSize = new System.Drawing.Size(40, 24);
+        var rot = new System.Windows.Forms.ToolStripMenuItem("Rotate day/night");
+        rot.Checked = rotating;
+        rot.Click += delegate { PickStyle("rotate"); };
+        change.DropDownItems.Add(rot);
+        var dark = new HashSet<string>(DarkStyles, StringComparer.OrdinalIgnoreCase);
+        // styles on disk, plus the ones styles.json can download (shown with "(download)")
+        var all = new List<string>();
+        try { foreach (string f in Directory.GetFiles(Path.Combine(Dir, "styles"), "*.mp4")) all.Add(StyleName(f)); } catch { }
+        var missingList = StyleDownloads.Missing();
+        int missing = missingList.Count;
+        foreach (string n in missingList) if (!all.Contains(n)) all.Add(n);
+        all.Sort(delegate (string a, string b) { return string.Compare(Pretty(a), Pretty(b), StringComparison.OrdinalIgnoreCase); });
+        foreach (bool night in new[] { false, true })
+        {
+            change.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
+            var head = new System.Windows.Forms.ToolStripMenuItem(night ? "Night" : "Day");
+            head.Enabled = false;
+            change.DropDownItems.Add(head);
+            foreach (string name in all)
+            {
+                if (dark.Contains(name) != night) continue;
+                string n = name;
+                var it = new System.Windows.Forms.ToolStripMenuItem(Pretty(n) + (missingList.Contains(n) ? "  (download)" : ""), Thumb(n));
+                it.Checked = !rotating && n == single;
+                if (n == playing) it.Font = new System.Drawing.Font(it.Font, System.Drawing.FontStyle.Bold);
+                it.Click += delegate { PickStyle(n); };
+                change.DropDownItems.Add(it);
+            }
+        }
+        menu.Items.Add(change);
+        menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        if (missing > 0)
+        {
+            var getAll = new System.Windows.Forms.ToolStripMenuItem("Download all styles (" + missing + ")");
+            getAll.Enabled = StyleDownloads.Status().Length == 0 || !StyleDownloads.Status().StartsWith("downloading");
+            getAll.Click += delegate { foreach (string n in StyleDownloads.Missing()) StyleDownloads.Request(n); };
+            menu.Items.Add(getAll);
+        }
+        var autostart = new System.Windows.Forms.ToolStripMenuItem("Start with Windows");
+        autostart.Checked = StartsWithWindows();
+        autostart.Click += delegate { SetStartWithWindows(!StartsWithWindows()); };
+        menu.Items.Add(autostart);
+        menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        var quit = new System.Windows.Forms.ToolStripMenuItem("Quit Loopscape");
+        quit.Click += delegate { Quit("tray icon"); };
+        menu.Items.Add(quit);
+    }
+    static string HotkeyLabel(string spec)
+    {
+        var parts = new List<string>();
+        foreach (string p in spec.Split('+'))
+        {
+            string s = p.Trim();
+            parts.Add(s.Length <= 1 ? s.ToUpperInvariant() : char.ToUpperInvariant(s[0]) + s.Substring(1));
+        }
+        return string.Join("+", parts.ToArray());
+    }
+    internal static string RainmeterExe()
+    {
+        foreach (string p in new[] {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Rainmeter\Rainmeter.exe"),
+            @"C:\Program Files\Rainmeter\Rainmeter.exe", @"C:\Program Files (x86)\Rainmeter\Rainmeter.exe" })
+            if (File.Exists(p)) return p;
+        return null;
+    }
+    static void OpenWidgetSettings()
+    {
+        string rm = RainmeterExe();
+        if (rm == null) { Log("tray: Rainmeter.exe not found"); return; }
+        try { Process.Start(rm, "!ActivateConfig \"LaptopInfo\\Settings\" \"Settings.ini\""); }
+        catch (Exception e) { Log("tray: could not open settings: " + e.Message); }
+    }
+    // Is the Settings panel open? (Rainmeter.ini: [LaptopInfo\Settings] Active=1)
+    static bool SettingsPanelOpen()
+    {
+        try
+        {
+            string f = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"Rainmeter\Rainmeter.ini");
+            bool inSection = false;
+            foreach (string raw in File.ReadAllLines(f))
+            {
+                string l = raw.Trim();
+                if (l.StartsWith("[")) inSection = l.Equals(@"[LaptopInfo\Settings]", StringComparison.OrdinalIgnoreCase);
+                else if (inSection && l.StartsWith("Active=", StringComparison.OrdinalIgnoreCase)) return l.Substring(7).Trim() != "0";
+            }
+        }
+        catch { }
+        return false;
+    }
+    // Same as a tile in the Settings panel: the choice goes into Settings.inc (WallpaperMode), which Loopscape watches and
+    // which the panel shows. Without the widgets installed it goes into Loopscape.ini instead.
+    static void PickStyle(string name)
+    {
+        ThreadPool.QueueUserWorkItem(delegate { PickStyleNow(name); });   // keep the menu thread free
+    }
+    static void PickStyleNow(string name)
+    {
+        Log("tray: style " + name);
+        string inc = Path.Combine(Res, "Settings.inc");
+        if (File.Exists(inc)) SetLine(inc, "WallpaperMode", name, false);
+        else
+        {
+            string ini = Path.Combine(Dir, "Loopscape.ini");
+            if (name == "rotate")
+            {
+                SetLine(ini, "rotate", string.Join(",", KnownStyles(false).ToArray()), true);
+                SetLine(ini, "rotateDark", string.Join(",", KnownStyles(true).ToArray()), true);
+            }
+            else
+            {
+                SetLine(ini, "video", name == "gradient" ? Path.Combine(Dir, "loop.mp4") : Path.Combine(Dir, "styles", name + ".mp4"), true);
+                SetLine(ini, "rotate", "", true);
+            }
+        }
+        // an open panel shows the new pick after a refresh
+        string rm = RainmeterExe();
+        if (rm != null && SettingsPanelOpen())
+            try { Process.Start(rm, "!Refresh \"LaptopInfo\\Settings\""); } catch { }
+    }
+
+    // ---------------- Start with Windows (HKCU\...\Run, listed in Task Manager > Startup apps) ----------------
+    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run", RunName = "Loopscape";
+    static bool StartsWithWindows()
+    {
+        try { using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey)) return k != null && k.GetValue(RunName) != null; }
+        catch { return false; }
+    }
+    static void SetStartWithWindows(bool on)
+    {
+        try
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey))
+            {
+                if (on) k.SetValue(RunName, "\"" + System.Reflection.Assembly.GetExecutingAssembly().Location + "\"");
+                else if (k.GetValue(RunName) != null) k.DeleteValue(RunName);
+            }
+            Log("start with Windows: " + (on ? "on" : "off"));
+        }
+        catch (Exception e) { Log("start with Windows: " + e.Message); }
+    }
+
+    // ---------------- Quitting (tray, or "Loopscape.exe --quit" from the installer / uninstaller) ----------------
+    const string QuitEventName = "Local\\LoopscapeQuit";
+    static void Quit(string why)
+    {
+        Log("quit: " + why);
+        try { if (tray != null) tray.Visible = false; } catch { }
+        StopMpv();
+        Environment.Exit(0);
+    }
+
+    static volatile bool downloadDone;
+
+    // ---------------- Main loop ----------------
+    [STAThread]
+    static void Main(string[] argv)
+    {
+        bool quitArg = Array.Exists(argv, delegate (string a) { return a.Equals("--quit", StringComparison.OrdinalIgnoreCase); });
+        // "--quit": ask the running copy to stop (it stops mpv and exits), wait up to 10 s for it to go
+        if (quitArg)
+        {
+            EventWaitHandle ev;
+            if (EventWaitHandle.TryOpenExisting(QuitEventName, out ev)) using (ev) ev.Set();
+            for (int i = 0; i < 100; i++)
+            {
+                Mutex m;
+                if (!Mutex.TryOpenExisting("Local\\LoopscapeLauncher", out m)) return;
+                m.Dispose();
+                Thread.Sleep(100);
+            }
+            return;
+        }
+        bool created;
+        using (var mutex = new Mutex(true, "Local\\LoopscapeLauncher", out created))
+        {
+            if (!created) return; // already running
+            SetProcessDPIAware();
+            try { Directory.CreateDirectory(Path.Combine(Dir, "styles")); } catch { }
+            QuitStrayMpv();
+            AppDomain.CurrentDomain.ProcessExit += delegate { StopMpv(); };
+            var quitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, QuitEventName);
+            var quitWatch = new Thread(delegate () { quitEvent.WaitOne(); Quit("asked by Loopscape.exe --quit"); });
+            quitWatch.IsBackground = true;
+            quitWatch.Start();
+            StyleDownloads.Changed += delegate { downloadDone = true; };
+
+            LoadConfig();
+            StyleDownloads.QueueFromFile();   // styles picked in the installer
+            // onBattery: static = fade to your Windows wallpaper and close mpv; pause = freeze video; play = keep animating
+            string onBattery = Get("onBattery", "static").ToLowerInvariant();
+            bool pauseWhenCovered = GetBool("pauseWhenCovered", true);
+            int fadeMs = Math.Max(0, GetInt("fadeMs", 1500));
+            int interval = Math.Max(250, GetInt("pollMs", 1500));
+
+            IntPtr host = IntPtr.Zero;
+            int failures = 0;
+            long tick = 0;
+            bool hadMpv = false;
+            // Adaptive widget text colours run on their own thread (interval depends on the chosen mode)
+            WidgetThemes.Start();
+            StartHotkey();
+            StartTray();
+            long iniStamp = ConfigStamp();
+            DateTime nextStamp = NextFileStamp();
+            DateTime manualUntil = DateTime.MinValue;   // a style change shortly after a settings change was picked by the user
+            while (true)
+            {
+                tick++;
+                try
+                {
+                    // Settings changed (e.g. a new style picked in the widget Settings panel): reload them in place.
+                    // The video switch then happens below with the usual live crossfade - no restart, no flash.
+                    long stamp = ConfigStamp();
+                    if (stamp != iniStamp)
+                    {
+                        iniStamp = stamp;
+                        manualUntil = DateTime.Now.AddSeconds(10);
+                        Thread.Sleep(40);    // let the writer finish (the files are tiny)
+                        LoadConfig();
+                        onBattery = Get("onBattery", "static").ToLowerInvariant();
+                        pauseWhenCovered = GetBool("pauseWhenCovered", true);
+                        fadeMs = Math.Max(0, GetInt("fadeMs", 1500));
+                        Log("settings reloaded");
+                    }
+                    // Skip to the next style (hotkey, or @Resources\wallnext.txt touched by a widget / the panel)
+                    DateTime ns = NextFileStamp();
+                    if (nextRequested || ns != nextStamp)
+                    {
+                        nextRequested = false; nextStamp = ns;
+                        Next();
+                        manualUntil = DateTime.Now.AddSeconds(10);
+                        long s2 = ConfigStamp();
+                        if (s2 != iniStamp) { iniStamp = s2; LoadConfig(); }   // Next() may have saved a new single style
+                    }
+
+                    bool battery = OnBattery();
+                    bool covered = pauseWhenCovered && DesktopCovered();
+                    bool wantVideo = !battery || onBattery != "static";
+
+                    if (wantVideo)
+                    {
+                        bool hostGone = host == IntPtr.Zero || !IsWindow(host) || (MpvRunning && tick % 3 == 0 && HostProblem(host));
+                        if (hostGone || !MpvRunning)
+                        {
+                            if (hadMpv && !MpvRunning && !hostGone && ++failures > 5)
+                            {
+                                // don't quit for good (the wallpaper would never come back until the next sign-in): wait, then retry
+                                Log("mpv keeps exiting; retrying in 60 s");
+                                Thread.Sleep(60000); failures = 0;
+                            }
+                            if (hostGone) StopMpv();
+                            host = FindWallpaperHost();
+                            if (host != IntPtr.Zero)
+                            {
+                                bool fade = fadeMs > 0 && !covered && PrepareStatic();
+                                StartMpv(host, fade);
+                                hadMpv = true;
+                                if (fade) FadeIn(fadeMs);
+                            }
+                        }
+                        else
+                        {
+                            failures = 0;
+                            string want = CurrentVideo();
+                            if (!string.Equals(want, Playing, StringComparison.OrdinalIgnoreCase))
+                            {
+                                bool manual = DateTime.Now < manualUntil;
+                                // A frozen frame (on battery / covered) picked by hand: swap it instantly, no crossfade
+                                bool frozen = covered || (battery && onBattery == "pause");
+                                SwitchTo(want, fadeMs > 0 && !covered && !(manual && frozen), manual);
+                                manualUntil = DateTime.MinValue;
+                            }
+                            else if (tick % Math.Max(1, 30000 / interval) == 0)
+                                RemoveStrayFilter();
+                        }
+
+                        SetPaused(covered || (battery && onBattery == "pause"));
+                    }
+                    else if (MpvRunning)
+                    {
+                        Log("on battery: switching to static wallpaper");
+                        StopToStill();
+                        hadMpv = false; failures = 0;
+                    }
+                    else UpdateBatteryStill();   // hourly still rotation while on battery
+                    PublishStatus(battery, onBattery, covered);
+                }
+                catch (Exception e) { Log("error: " + e.Message); }
+
+                // Wait for the next check, but react to plugging in / unplugging within ~100 ms (power status is cheap)
+                bool wasBattery = OnBattery();
+                for (int waited = 0; waited < interval; waited += 100)
+                {
+                    Thread.Sleep(Math.Min(100, interval - waited));
+                    if (OnBattery() != wasBattery) break;
+                    // a style picked in the Settings panel, or a skip, is handled right away, not on the next poll
+                    if (nextRequested || ConfigStamp() != iniStamp || NextFileStamp() != nextStamp) break;
+                    // a download finished or moved on: switch to it / update the panel's progress now
+                    if (downloadDone) { downloadDone = false; break; }
+                }
+            }
+        }
+    }
+    public static void LogLine(string m) { Log(m); }
+
+    // ---------------- Style downloads ----------------
+    // styles.json next to Loopscape.exe lists the styles that can be fetched (name, file, size, sha256) and baseUrl, the
+    // project's own GitHub release that holds them (stylesUrl= in Loopscape.ini overrides it; https only). A download
+    // goes to styles\<file>.part, must match the listed size and SHA-256, and is only then renamed into place.
+    static class StyleDownloads
+    {
+        class Entry { public string Name = "", File = "", Sha256 = ""; public long Size; }
+        static Dictionary<string, Entry> manifest;
+        static string baseUrl = "";
+        static readonly object gate = new object();
+        static readonly Queue<string> queue = new Queue<string>();
+        static readonly Dictionary<string, DateTime> failedAt = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        static string current = "", failed = "";
+        static long got, total;
+        static Thread worker;
+        public static event Action Changed;   // a download started, made progress, finished or failed
+
+        static string Field(string obj, string key)
+        {
+            var m = Regex.Match(obj, "\"" + key + "\"\\s*:\\s*\"?([^\",}]*)\"?");
+            return m.Success ? m.Groups[1].Value.Trim() : "";
+        }
+        static Dictionary<string, Entry> Manifest()
+        {
+            lock (gate)
+            {
+                if (manifest != null) return manifest;
+                var m = new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    string path = Path.Combine(ExeDir, "styles.json");
+                    if (System.IO.File.Exists(path))
+                    {
+                        string json = System.IO.File.ReadAllText(path);
+                        baseUrl = Field(json, "baseUrl");
+                        foreach (Match o in Regex.Matches(json, "\\{[^{}]*\\}"))
+                        {
+                            var e = new Entry { Name = Field(o.Value, "name"), File = Field(o.Value, "file"), Sha256 = Field(o.Value, "sha256").ToLowerInvariant() };
+                            long.TryParse(Field(o.Value, "size"), out e.Size);
+                            if (e.Name.Length > 0 && e.File.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) && e.Sha256.Length == 64
+                                && e.File.IndexOfAny(Path.GetInvalidFileNameChars()) < 0)
+                                m[e.Name] = e;
+                        }
+                    }
+                }
+                catch (Exception ex) { Log("styles.json: " + ex.Message); }
+                manifest = m;
+                return m;
+            }
+        }
+        static string Target(Entry e) { return Path.Combine(Dir, "styles", e.File); }
+
+        // Styles that styles.json can fetch and that aren't on disk yet
+        public static List<string> Missing()
+        {
+            var list = new List<string>();
+            foreach (var e in Manifest().Values) if (!System.IO.File.Exists(Target(e))) list.Add(e.Name);
+            return list;
+        }
+
+        // Queue a style for download. True while it is queued or downloading; false if it can't be fetched (not in
+        // styles.json, already on disk, or it failed in the last 10 minutes).
+        public static bool Request(string name)
+        {
+            Entry e;
+            if (!Manifest().TryGetValue(name, out e) || System.IO.File.Exists(Target(e))) return false;
+            lock (gate)
+            {
+                if (current == e.Name || queue.Contains(e.Name)) return true;
+                DateTime t;
+                if (failedAt.TryGetValue(e.Name, out t) && DateTime.Now - t < TimeSpan.FromMinutes(10)) return false;
+                if (failed == e.Name) failed = "";
+                queue.Enqueue(e.Name);
+                if (worker == null)
+                {
+                    worker = new Thread(Run);
+                    worker.IsBackground = true;
+                    worker.Start();
+                }
+            }
+            return true;
+        }
+
+        // "downloading Aurora 42%", "download failed: Aurora", or ""
+        public static string Status()
+        {
+            lock (gate)
+            {
+                if (current.Length > 0) return "downloading " + Pretty(current) + (total > 0 ? " " + (got * 100 / total) + "%" : "");
+                if (failed.Length > 0) return "download failed: " + Pretty(failed);
+                return "";
+            }
+        }
+
+        static void Fire() { var h = Changed; if (h != null) try { h(); } catch { } }
+
+        static void Run()
+        {
+            while (true)
+            {
+                Entry e;
+                lock (gate)
+                {
+                    if (queue.Count == 0) { current = ""; worker = null; break; }
+                    e = Manifest()[queue.Dequeue()];
+                    current = e.Name; got = 0; total = e.Size;
+                }
+                Fire();
+                try { Download(e); }
+                catch (Exception ex)
+                {
+                    Log("download " + e.File + " failed: " + ex.Message);
+                    try { System.IO.File.Delete(Target(e) + ".part"); } catch { }
+                    lock (gate) { failedAt[e.Name] = DateTime.Now; failed = e.Name; }
+                }
+            }
+            Fire();
+        }
+
+        static void Download(Entry e)
+        {
+            string url = Get("stylesUrl", baseUrl);
+            if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) throw new Exception("no https download address");
+            if (!url.EndsWith("/")) url += "/";
+            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+            Directory.CreateDirectory(Path.Combine(Dir, "styles"));
+            string dest = Target(e), part = dest + ".part";
+            Log("downloading " + url + e.File);
+            var req = (HttpWebRequest)WebRequest.Create(url + Uri.EscapeDataString(e.File));
+            req.UserAgent = "Loopscape";
+            req.Timeout = 30000;
+            req.ReadWriteTimeout = 60000;
+            using (var resp = req.GetResponse())
+            using (var s = resp.GetResponseStream())
+            using (var f = System.IO.File.Create(part))
+            using (var sha = SHA256.Create())
+            {
+                var buf = new byte[81920];
+                int n;
+                DateTime lastFire = DateTime.Now;
+                while ((n = s.Read(buf, 0, buf.Length)) > 0)
+                {
+                    f.Write(buf, 0, n);
+                    sha.TransformBlock(buf, 0, n, null, 0);
+                    long sofar;
+                    lock (gate) { got += n; sofar = got; }
+                    if (e.Size > 0 && sofar > e.Size) throw new Exception("file is bigger than styles.json says");
+                    if (DateTime.Now - lastFire > TimeSpan.FromSeconds(1)) { lastFire = DateTime.Now; Fire(); }
+                }
+                sha.TransformFinalBlock(buf, 0, 0);
+                string hex = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+                if (hex != e.Sha256) throw new Exception("checksum mismatch");
+            }
+            if (System.IO.File.Exists(dest)) System.IO.File.Delete(dest);
+            System.IO.File.Move(part, dest);
+            Log("downloaded " + e.File);
+            PruneListFile();
+        }
+
+        // download-styles.txt in the data folder: styles the installer was asked to fetch (one name per line). They
+        // are queued at every start until they're on disk, so an interrupted or offline first run finishes later.
+        static string ListFile { get { return Path.Combine(Dir, "download-styles.txt"); } }
+        static List<string> ListedStyles()
+        {
+            var names = new List<string>();
+            try
+            {
+                if (System.IO.File.Exists(ListFile))
+                    foreach (string l in System.IO.File.ReadAllLines(ListFile))
+                        if (l.Trim().Length > 0 && !l.TrimStart().StartsWith(";")) names.Add(l.Trim());
+            }
+            catch { }
+            return names;
+        }
+        public static void QueueFromFile()
+        {
+            var names = ListedStyles();
+            if (names.Count == 0) return;
+            int queued = 0;
+            foreach (string n in names) if (Request(n)) queued++;
+            Log("download-styles.txt: " + queued + " of " + names.Count + " styles queued");
+            PruneListFile();
+        }
+        // drop styles that are on disk now (or not downloadable at all); delete the file once nothing is left
+        static void PruneListFile()
+        {
+            try
+            {
+                if (!System.IO.File.Exists(ListFile)) return;
+                var left = new List<string>();
+                foreach (string n in ListedStyles())
+                {
+                    Entry e;
+                    if (Manifest().TryGetValue(n, out e) && !System.IO.File.Exists(Target(e))) left.Add(n);
+                }
+                if (left.Count == 0) System.IO.File.Delete(ListFile);
+                else System.IO.File.WriteAllLines(ListFile, left.ToArray());
+            }
+            catch { }
+        }
+    }
+}
+
+// Adaptive text colour for the LaptopInfo Rainmeter widgets (Settings > Adaptive text colour).
+// Samples the wallpaper just outside each widget and writes Documents\Rainmeter\Skins\LaptopInfo\@Resources\bgtheme.txt:
+//   mode=<mode>
+//   W|<config>|text=R,G,B|pill=R,G,B,A|shadow=R,G,B,A                 colours for the whole widget
+//   L|<config>|<meter>|text=...|pill=...|shadow=...                  per-line colours (mode "perline")
+// Modes: off, contrast (white/dark, every 3 s), smooth (same, every 1 s; widgets fade), tinted (colours taken from the
+// wallpaper's hue, 3 s), smoothtinted (tinted, 1 s, fades), perline (each line estimated from the wallpaper beside
+// it, 1 s, fades). Only active when the panel tint is off.
+// Cost: per widget, four 1-pixel strips are copied from the screen per check and a few dozen pixels read; points covered
+// by other windows are skipped. The widget itself is never captured (it is drawn over the wallpaper, so the wallpaper
+// directly behind the text can't be seen - per-line mode estimates it from the wallpaper at the same height beside it).
+static class WidgetThemes
+{
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+    [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
+
+    static readonly string Res = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"Rainmeter\Skins\LaptopInfo\@Resources");
+    static readonly Dictionary<string, bool> DarkText = new Dictionary<string, bool>();   // hysteresis per widget/line
+    static string lastWritten = null;
+    const int Gap = 8, PerSide = 8;
+
+    // The wallpaper just changed: sample every ~50 ms for a moment (the new frame takes a few draws to reach the
+    // screen) and push each new result to the widgets at once instead of waiting for their 1 s read
+    static readonly AutoResetEvent wake = new AutoResetEvent(false);
+    static long burstUntil;   // deadline on the clock below, in ms
+    static readonly Stopwatch clock = Stopwatch.StartNew();
+    public static void Kick() { Kick(1500); }
+    public static void Kick(int ms)
+    {
+        Interlocked.Exchange(ref burstUntil, clock.ElapsedMilliseconds + ms);
+        wake.Set();
+    }
+
+    // The incoming style's first frame, loaded once per crossfade
+    static string stillPath;
+    static System.Drawing.Bitmap stillImage;
+    static System.Drawing.Bitmap IncomingImage()
+    {
+        string p = Loopscape.IncomingStill;
+        if (p != stillPath)
+        {
+            if (stillImage != null) { stillImage.Dispose(); stillImage = null; }
+            stillPath = p;
+            if (p != null) try { stillImage = new System.Drawing.Bitmap(p); } catch (Exception e) { Loopscape.LogLine("theme: still " + e.Message); }
+        }
+        return stillImage;
+    }
+    static bool Bursting { get { return clock.ElapsedMilliseconds < Interlocked.Read(ref burstUntil); } }
+
+    public static void Start()
+    {
+        var t = new Thread(delegate ()
+        {
+            while (true)
+            {
+                int wait = 3000;
+                try { wait = Update(); } catch (Exception e) { Loopscape.LogLine("theme error: " + e.Message); }
+                if (Bursting) wait = 50;
+                wake.WaitOne(wait);
+            }
+        });
+        t.IsBackground = true;
+        t.Start();
+    }
+
+    static string Cls(IntPtr h) { var s = new StringBuilder(64); GetClassName(h, s, 64); return s.ToString(); }
+
+    static Dictionary<string, string> ReadSettings()
+    {
+        var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string f = Path.Combine(Res, "Settings.inc");
+        if (!File.Exists(f)) return d;
+        foreach (string raw in File.ReadAllLines(f))
+        {
+            int i = raw.IndexOf('=');
+            if (i > 0 && !raw.TrimStart().StartsWith(";")) d[raw.Substring(0, i).Trim()] = raw.Substring(i + 1).Trim();
+        }
+        return d;
+    }
+
+    static Dictionary<string, RECT> Widgets()
+    {
+        var o = new Dictionary<string, RECT>();
+        EnumWindows(delegate (IntPtr h, IntPtr l)
+        {
+            if (Cls(h) != "RainmeterMeterWindow" || !IsWindowVisible(h)) return true;
+            var t = new StringBuilder(512); GetWindowText(h, t, 512);
+            string title = t.ToString();
+            int i = title.IndexOf(@"\Skins\", StringComparison.OrdinalIgnoreCase);
+            if (i < 0) return true;
+            string rel = title.Substring(i + 7);
+            int slash = rel.LastIndexOf('\\');
+            if (slash <= 0) return true;
+            string cfg = rel.Substring(0, slash);
+            if (!cfg.StartsWith(@"LaptopInfo\", StringComparison.OrdinalIgnoreCase)) return true;
+            if (cfg.EndsWith("SnapGuides") || cfg.EndsWith("Settings") || cfg.EndsWith("ViewMenu")) return true;
+            RECT r; if (GetWindowRect(h, out r)) o[cfg] = r;
+            return true;
+        }, IntPtr.Zero);
+        return o;
+    }
+
+    static bool IsDesktop(int x, int y)
+    {
+        var p = new POINT(); p.X = x; p.Y = y;
+        IntPtr w = WindowFromPoint(p);
+        if (w == IntPtr.Zero) return false;
+        string c = Cls(GetAncestor(w, 2 /*GA_ROOT*/));
+        return c == "Progman" || c == "WorkerW";
+    }
+
+    // The four 1-pixel strips around a widget (Gap px outside its window), copied from the screen once per check
+    class Ring : IDisposable
+    {
+        public int L, T, R, B;              // ring coordinates (screen px)
+        System.Drawing.Bitmap top, bottom, left, right;
+        int vx, vy, vw, vh;
+        System.Drawing.Bitmap img;          // set: read from this frame (filling the primary screen) instead of the screen
+        double iScale, iOffX, iOffY;
+        public Ring(RECT r) : this(r, null) { }
+        public Ring(RECT r, System.Drawing.Bitmap image)
+        {
+            vx = GetSystemMetrics(76); vy = GetSystemMetrics(77); vw = GetSystemMetrics(78); vh = GetSystemMetrics(79);
+            L = r.L - Gap; T = r.T - Gap; R = r.R + Gap; B = r.B + Gap;
+            if (image != null)
+            {
+                // the video fills the screen like mpv shows it: scaled to cover, centred, edges cropped
+                img = image;
+                int sw = GetSystemMetrics(0), sh = GetSystemMetrics(1);
+                iScale = Math.Max(sw / (double)img.Width, sh / (double)img.Height);
+                iOffX = (sw - img.Width * iScale) / 2; iOffY = (sh - img.Height * iScale) / 2;
+                return;
+            }
+            top = Grab(L, T, R - L + 1, 1); bottom = Grab(L, B, R - L + 1, 1);
+            left = Grab(L, T, 1, B - T + 1); right = Grab(R, T, 1, B - T + 1);
+        }
+        System.Drawing.Bitmap Grab(int x, int y, int w, int h)
+        {
+            if (x < vx || y < vy || x + w > vx + vw || y + h > vy + vh)
+            {
+                // partly off-screen: copy only the visible part, keep the bitmap aligned to the full strip
+                int sx = Math.Max(x, vx), sy = Math.Max(y, vy), ex = Math.Min(x + w, vx + vw), ey = Math.Min(y + h, vy + vh);
+                if (ex <= sx || ey <= sy) return null;
+                var part = new System.Drawing.Bitmap(w, h);
+                using (var g = System.Drawing.Graphics.FromImage(part)) g.CopyFromScreen(sx, sy, sx - x, sy - y, new System.Drawing.Size(ex - sx, ey - sy));
+                return part;
+            }
+            var bmp = new System.Drawing.Bitmap(w, h);
+            using (var g = System.Drawing.Graphics.FromImage(bmp)) g.CopyFromScreen(x, y, 0, 0, bmp.Size);
+            return bmp;
+        }
+        // Colour at a ring point, or null if off-screen / covered by another window
+        public double[] At(int x, int y)
+        {
+            if (x < vx || y < vy || x >= vx + vw || y >= vy + vh) return null;
+            if (img != null)
+            {
+                int ix = (int)((x - iOffX) / iScale), iy = (int)((y - iOffY) / iScale);
+                if (ix < 0 || iy < 0 || ix >= img.Width || iy >= img.Height) return null;
+                var p = img.GetPixel(ix, iy);
+                return new double[] { p.R, p.G, p.B };
+            }
+            System.Drawing.Bitmap b = null; int bx = 0, by = 0;
+            if (y == T && top != null) { b = top; bx = x - L; }
+            else if (y == B && bottom != null) { b = bottom; bx = x - L; }
+            else if (x == L && left != null) { b = left; by = y - T; }
+            else if (x == R && right != null) { b = right; by = y - T; }
+            if (b == null || bx < 0 || by < 0 || bx >= b.Width || by >= b.Height) return null;
+            if (!IsDesktop(x, y)) return null;
+            var c = b.GetPixel(bx, by);
+            return new double[] { c.R, c.G, c.B };
+        }
+        public void Dispose() { foreach (var b in new[] { top, bottom, left, right }) if (b != null) b.Dispose(); }
+    }
+
+    static double[] Average(Ring ring)
+    {
+        double r = 0, g = 0, b = 0; int n = 0;
+        for (int k = 0; k < PerSide; k++)
+        {
+            int fx = ring.L + (int)((k + 0.5) * (ring.R - ring.L) / PerSide);
+            int fy = ring.T + (int)((k + 0.5) * (ring.B - ring.T) / PerSide);
+            foreach (var c in new[] { ring.At(fx, ring.T), ring.At(fx, ring.B), ring.At(ring.L, fy), ring.At(ring.R, fy) })
+                if (c != null) { r += c[0]; g += c[1]; b += c[2]; n++; }
+        }
+        return n >= 6 ? new[] { r / n, g / n, b / n } : null;
+    }
+
+    // Background estimate for a point inside the widget: blend of the wallpaper beside it (same height, left/right)
+    // and above/below it (same x), weighted by closeness
+    static double[] Beside(Ring ring, int px, int py)
+    {
+        var pts = new[] {
+            new { c = ring.At(ring.L, py), d = (double)(px - ring.L) }, new { c = ring.At(ring.R, py), d = (double)(ring.R - px) },
+            new { c = ring.At(px, ring.T), d = (double)(py - ring.T) }, new { c = ring.At(px, ring.B), d = (double)(ring.B - py) } };
+        double r = 0, g = 0, b = 0, wsum = 0;
+        foreach (var p in pts)
+        {
+            if (p.c == null) continue;
+            double w = 1.0 / Math.Max(4, p.d);
+            r += p.c[0] * w; g += p.c[1] * w; b += p.c[2] * w; wsum += w;
+        }
+        return wsum > 0 ? new[] { r / wsum, g / wsum, b / wsum } : null;
+    }
+
+    // ----- colour maths -----
+    static void ToHsl(double[] c, out double h, out double s, out double l)
+    {
+        double r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+        double max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+        l = (max + min) / 2; h = 0; s = 0;
+        if (max - min < 1e-6) return;
+        double d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        if (max == r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+        else if (max == g) h = ((b - r) / d + 2) / 6;
+        else h = ((r - g) / d + 4) / 6;
+    }
+    static double Hue(double p, double q, double t)
+    {
+        if (t < 0) t += 1; if (t > 1) t -= 1;
+        if (t < 1.0 / 6) return p + (q - p) * 6 * t;
+        if (t < 0.5) return q;
+        if (t < 2.0 / 3) return p + (q - p) * (2.0 / 3 - t) * 6;
+        return p;
+    }
+    static string Hsl(double h, double s, double l)
+    {
+        double r, g, b;
+        if (s < 1e-6) r = g = b = l;
+        else
+        {
+            double q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+            r = Hue(p, q, h + 1.0 / 3); g = Hue(p, q, h); b = Hue(p, q, h - 1.0 / 3);
+        }
+        return (int)Math.Round(r * 255) + "," + (int)Math.Round(g * 255) + "," + (int)Math.Round(b * 255);
+    }
+
+    static double Lum(double[] c) { return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255.0; }
+    static double SmoothStep(double a, double b, double x) { double t = Math.Max(0, Math.Min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
+
+    // Per-line colours on a continuous ramp: the text shade follows the background brightness gradually instead of
+    // snapping between two fixed colours; only the pill/shadow (and the light/dark side of the text) flip, with
+    // hysteresis, and pills get a little stronger on mid tones where contrast is weakest.
+    // bgA/bgB are the backgrounds at the two ends of the line (along `angle`, degrees, 0 = left to right, 90 = top to
+    // bottom); the text becomes a gradient between their shades ("text" -> "tend"). Light/dark is decided once per line
+    // (from its centre) so the gradient never crosses to the other side of its pill.
+    // polLum is the brightness over a wider area, used for the light/dark choice so neighbouring lines flip together.
+    static string RampColours(string key, double[] bg, double[] bgA, double[] bgB, int angle, double polLum)
+    {
+        double lum = Lum(bg);
+        double t = SmoothStep(0.30, 0.75, lum);                 // 0 = dark wallpaper, 1 = light wallpaper
+        bool dark; DarkText.TryGetValue(key, out dark);
+        if (polLum > 0.56) dark = true; else if (polLum < 0.49) dark = false;
+        DarkText[key] = dark;
+        double mid = 1 - Math.Abs(2 * t - 1);                   // 1 on mid tones
+        string text = Shade(dark, SmoothStep(0.30, 0.75, Lum(bgA))), tend = Shade(dark, SmoothStep(0.30, 0.75, Lum(bgB)));
+        int pa = (int)Math.Round((dark ? 200 : 140) + 50 * mid);
+        string pill = dark ? "255,255,255," + pa : "0,0,0," + pa;
+        string shadow = dark ? "255,255,255," + (int)Math.Round(130 + 60 * mid) : "0,0,0," + (int)Math.Round(150 + 60 * mid);
+        return "text=" + text + "|tend=" + tend + "|ang=" + angle + "|pill=" + pill + "|shadow=" + shadow;
+    }
+    static string Shade(bool dark, double t)
+    {
+        int g = dark ? (int)Math.Round(18 + 80 * (1 - t)) : (int)Math.Round(255 - 70 * t);
+        return dark ? g + "," + (g + 2) + "," + (g + 8) : g + "," + g + "," + g;
+    }
+
+    // Text / pill / shadow colours for a background colour
+    static string Colours(string key, double[] bg, bool tinted)
+    {
+        double lum = Lum(bg);
+        bool dark; DarkText.TryGetValue(key, out dark);
+        if (lum > 0.60) dark = true; else if (lum < 0.45) dark = false;   // hysteresis: no flicker on mid tones
+        DarkText[key] = dark;
+        string text, pill, shadow = dark ? "255,255,255,150" : "0,0,0,170";
+        if (!tinted)
+        {
+            text = dark ? "18,20,26" : "255,255,255";
+            pill = dark ? "255,255,255,215" : "0,0,0,160";
+        }
+        else
+        {
+            double h, s, l; ToHsl(bg, out h, out s, out l);
+            text = dark ? Hsl(h, Math.Min(s, 0.7) * 0.8, 0.16) : Hsl(h, Math.Min(s, 0.6) * 0.5, 0.93);
+            pill = dark ? Hsl(h, Math.Min(s, 0.6) * 0.4, 0.95) + ",215" : Hsl(h, Math.Min(s, 0.6) * 0.6, 0.09) + ",160";
+        }
+        return "text=" + text + "|pill=" + pill + "|shadow=" + shadow;
+    }
+
+    // Line positions published by the widget (snap.lua): "size W H" then "<meter> cx cy [w h]" in skin pixels
+    static List<KeyValuePair<string, double[]>> ReadLines(string cfg, out double w, out double h)
+    {
+        w = h = 0;
+        var o = new List<KeyValuePair<string, double[]>>();
+        string f = Path.Combine(Res, "lines-" + cfg.Replace('\\', '_') + ".txt");
+        if (!File.Exists(f)) return o;
+        foreach (string line in File.ReadAllLines(f))
+        {
+            string[] p = line.Split(' ');
+            if (p.Length != 3 && p.Length != 5) continue;
+            var n = new double[4]; bool ok = true;
+            for (int i = 1; i < p.Length; i++)
+                ok &= double.TryParse(p[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out n[i - 1]);
+            if (!ok) continue;
+            if (p[0] == "size") { w = n[0]; h = n[1]; } else o.Add(new KeyValuePair<string, double[]>(p[0], n));
+        }
+        return o;
+    }
+
+    // Background estimate anywhere in a widget: the wallpaper beside that point, blended with the line samples near
+    // it (Gaussian by distance) and a little of the widget's average, so nearby text agrees and shades change gradually
+    static double[] Field(Ring ring, List<double[]> pos, List<double[]> raw, double[] avg, double s2, double x, double y)
+    {
+        double r = 0, g = 0, b = 0, wsum = 0;
+        double[] local = Beside(ring, (int)x, (int)y);
+        if (local != null) { r += local[0]; g += local[1]; b += local[2]; wsum += 1; }
+        for (int j = 0; j < pos.Count; j++)
+        {
+            if (raw[j] == null) continue;
+            double dx = x - pos[j][0], dy = y - pos[j][1];
+            double w = Math.Exp(-(dx * dx + dy * dy) / s2);
+            r += raw[j][0] * w; g += raw[j][1] * w; b += raw[j][2] * w; wsum += w;
+        }
+        if (avg != null) { double w = 0.15; r += avg[0] * w; g += avg[1] * w; b += avg[2] * w; wsum += w; }
+        return wsum > 0 ? new[] { r / wsum, g / wsum, b / wsum } : null;
+    }
+
+    // One check; returns the milliseconds until the next one
+    public static int Update()
+    {
+        if (!Directory.Exists(Res)) return 5000;
+        var s = ReadSettings();
+        string v, mode;
+        if (!s.TryGetValue("TextColorMode", out mode) || mode.Length == 0)
+            mode = (s.TryGetValue("AdaptiveText", out v) && v == "1") ? "contrast" : "off";
+        mode = mode.ToLowerInvariant();
+        int alpha; if (!s.TryGetValue("PanelAlpha", out v) || !int.TryParse(v, out alpha)) alpha = 150;
+        bool active = mode != "off" && alpha < 60;   // with a tinted panel behind it, white text is always readable
+        bool fast = mode == "smooth" || mode == "smoothtinted" || mode == "perline";
+        bool tinted = mode == "tinted" || mode == "smoothtinted";
+
+        var sb = new StringBuilder("mode=" + (active ? mode : "off") + "\n");
+        var widgetCfgs = new List<string>();
+        if (active)
+        {
+            var moveTo = PendingMoves();
+            var incoming = IncomingImage();   // also frees the last one once its crossfade is over
+            foreach (var pair in Widgets())
+            {
+                widgetCfgs.Add(pair.Key);
+                // a widget about to move for a new wallpaper (snap.lua beginMove) is sampled where it is going, so its
+                // colours are right before it gets there; "at" tells it which spot an entry was sampled for
+                var kv = pair;
+                string at = "";
+                int[] m;
+                if (moveTo.TryGetValue(pair.Key, out m))
+                {
+                    var r = pair.Value;
+                    var dest = new RECT(); dest.L = m[0]; dest.T = m[1]; dest.R = m[0] + (r.R - r.L); dest.B = m[1] + (r.B - r.T);
+                    kv = new KeyValuePair<string, RECT>(pair.Key, dest);
+                    at = "|at=" + m[2] + "," + m[3];   // in the widget's own coordinates
+                }
+                // during a crossfade the screen is a blend: read the destination from the incoming style's first frame
+                using (var ring = new Ring(kv.Value, at.Length > 0 ? incoming : null))
+                {
+                    double[] avg = Average(ring);
+                    if (avg != null) sb.Append("W|" + kv.Key + "|" + Colours(kv.Key, avg, tinted) + at + "\n");
+                    if (mode != "perline") continue;
+                    double sw, sh; var lines = ReadLines(kv.Key, out sw, out sh);
+                    if (sw <= 0 || sh <= 0) continue;
+                    double kx = (kv.Value.R - kv.Value.L) / sw, ky = (kv.Value.B - kv.Value.T) / sh;   // skin px -> screen px
+                    // Raw estimate per line, then blend each with its neighbours (Gaussian by distance) so lines
+                    // close together agree and the colour shifts gradually across the widget instead of line by line
+                    var pos = new List<double[]>(); var raw = new List<double[]>();
+                    foreach (var ln in lines)
+                    {
+                        int px = kv.Value.L + (int)(ln.Value[0] * kx), py = kv.Value.T + (int)(ln.Value[1] * ky);
+                        pos.Add(new double[] { px, py }); raw.Add(Beside(ring, px, py) ?? avg);
+                    }
+                    double sigma = 45 * ky, s2 = 2 * sigma * sigma;
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        double cx = pos[i][0], cy = pos[i][1];
+                        double[] bg = Field(ring, pos, raw, avg, s2, cx, cy);
+                        if (bg == null) continue;
+                        // Gradient across the text: find which way the background brightens over the line's box and
+                        // take the shades at its two ends along that direction
+                        double hw = lines[i].Value[2] * kx / 2, hh = lines[i].Value[3] * ky / 2;
+                        int angle = 0; double[] bgA = bg, bgB = bg;
+                        if (hw >= 2)
+                        {
+                            Func<double, double, double> lumAt = (x, y) => { var c = Field(ring, pos, raw, avg, s2, x, y); return c == null ? Lum(bg) : Lum(c); };
+                            double gx = (lumAt(cx + hw, cy) - lumAt(cx - hw, cy)) / (2 * hw);
+                            double gy = hh >= 2 ? (lumAt(cx, cy + hh) - lumAt(cx, cy - hh)) / (2 * hh) : 0;
+                            double a = (Math.Abs(gx) + Math.Abs(gy) < 1e-6) ? 0 : Math.Atan2(gy, gx);
+                            double ux = Math.Cos(a), uy = Math.Sin(a), half = Math.Abs(ux) * hw + Math.Abs(uy) * hh;
+                            bgA = Field(ring, pos, raw, avg, s2, cx - ux * half, cy - uy * half) ?? bg;
+                            bgB = Field(ring, pos, raw, avg, s2, cx + ux * half, cy + uy * half) ?? bg;
+                            angle = ((int)Math.Round(a * 180 / Math.PI) + 360) % 360;
+                        }
+                        // light/dark choice from a wider area (twice the blend radius) so nearby lines agree
+                        double pl = 0, pw = 0, sp = 4 * s2;
+                        for (int j = 0; j < pos.Count; j++)
+                        {
+                            if (raw[j] == null) continue;
+                            double dx = cx - pos[j][0], dy = cy - pos[j][1], w = Math.Exp(-(dx * dx + dy * dy) / sp);
+                            pl += Lum(raw[j]) * w; pw += w;
+                        }
+                        double polLum = pw > 0 ? pl / pw : Lum(bg);
+                        sb.Append("L|" + kv.Key + "|" + lines[i].Key + "|" + RampColours(kv.Key + "|" + lines[i].Key, bg, bgA, bgB, angle, polLum) + "\n");
+                    }
+                }
+            }
+        }
+        string text = sb.ToString();
+        if (text != lastWritten)
+        {
+            File.WriteAllText(Path.Combine(Res, "bgtheme.txt"), text);
+            lastWritten = text;
+            if (Bursting && active) Push("ThemeNow()", widgetCfgs);
+        }
+        return fast && active ? 1000 : 3000;
+    }
+
+    // @Resources\moveto.txt ("<config> <x> <y>" per line), written by snap.lua just before a wallpaper move and
+    // removed once it has moved; ignored when older than 3 s (a widget that never got its answer moved anyway)
+    // Values: { physical x, physical y, Rainmeter x, Rainmeter y }. Rainmeter's coordinates are DPI-scaled; the first
+    // line "screen <x> <y> <w> <h>" (Rainmeter's SCREENAREA, primary screen) gives the scale.
+    static Dictionary<string, int[]> PendingMoves()
+    {
+        var d = new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            string f = Path.Combine(Res, "moveto.txt");
+            if (!File.Exists(f) || (DateTime.UtcNow - File.GetLastWriteTimeUtc(f)).TotalSeconds > 3) return d;
+            double scale = 1;
+            foreach (string line in File.ReadAllLines(f))
+            {
+                string[] p = line.Trim().Split(' ');
+                int x, y, w;
+                if (p.Length == 5 && p[0] == "screen")
+                {
+                    if (int.TryParse(p[3], out w) && w > 0) scale = GetSystemMetrics(0) / (double)w;
+                    continue;
+                }
+                if (p.Length >= 3 && int.TryParse(p[p.Length - 2], out x) && int.TryParse(p[p.Length - 1], out y))
+                    d[string.Join(" ", p, 0, p.Length - 2)] = new[] { (int)Math.Round(x * scale), (int)Math.Round(y * scale), x, y };
+            }
+        }
+        catch { }
+        return d;
+    }
+
+    // Run a snap.lua function in each visible widget right away, e.g. ThemeNow() (read bgtheme.txt, apply without the
+    // colour fade) or PlaceNow() (read wallstyle.txt and move to the style's spot)
+    public static void Push(string call) { try { Push(call, new List<string>(Widgets().Keys)); } catch { } }
+    static void Push(string call, List<string> cfgs)
+    {
+        string rm = Loopscape.RainmeterExe();
+        if (rm == null || cfgs.Count == 0) return;
+        var bangs = new StringBuilder();
+        foreach (string c in cfgs) bangs.Append("[!CommandMeasure MeasureSnap \"" + call + "\" \"" + c + "\"]");
+        try
+        {
+            var psi = new ProcessStartInfo(rm, bangs.ToString()); psi.UseShellExecute = false; psi.CreateNoWindow = true;
+            using (Process.Start(psi)) { }
+        }
+        catch (Exception e) { Loopscape.LogLine("theme push failed: " + e.Message); }
+    }
+}

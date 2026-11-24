@@ -1,0 +1,82 @@
+# Builds the installer from the tagged source on GitHub's Windows runner, so anyone can check in the Actions log
+# that the release came from this code. Pushing a tag like v1.0.0 makes a DRAFT release with the installer and
+# SHA256SUMS.txt (publish it by hand after a look); a manual run just uploads the installer as a build artifact.
+# Inputs, all checked against SHA-256 values in the repo:
+#   build/deps.json                       mpv and Rainmeter's installer
+#   installer/styles-SHA256SUMS.txt       the videos and stills on the styles release (build/make-styles-release.ps1)
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}'.TrimStart('v') } else { '0.0.0-dev' }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Styles release (videos and stills)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = ((Get-Content installer/styles-SHA256SUMS.txt -First 1) -replace '^#\s*', '').Trim()
+          gh release download $tag --dir build/deps/styles --clobber
+
+      - name: Dependencies (checked against build/deps.json and installer/styles-SHA256SUMS.txt)
+        shell: pwsh
+        run: ./build/get-deps.ps1
+
+      - name: Unpack mpv
+        shell: pwsh
+        run: |
+          $a = Get-ChildItem build/deps -Filter *.7z | Select-Object -First 1
+          7z x $a.FullName -obuild/deps/mpv -y | Out-Null
+          if (-not (Test-Path build/deps/mpv/mpv.exe)) { throw 'mpv.exe not found in the archive' }
+
+      - name: Stage
+        shell: pwsh
+        run: |
+          $rm = Get-ChildItem build/deps -Filter Rainmeter-*.exe | Select-Object -First 1
+          ./build/stage.ps1 -StylesDir build/deps/styles -LoopMp4 build/deps/styles/loop.mp4 `
+            -StillsZip build/deps/styles/stills.zip -MpvDir build/deps/mpv -RainmeterSetup $rm.FullName
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc /Qp "/DAppVersion=${{ steps.ver.outputs.version }}" installer/Loopscape.iss
+          if ($LASTEXITCODE) { throw 'iscc failed' }
+          $exe = Get-Item build/Loopscape-Setup-*.exe
+          "$((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant())  $($exe.Name)" | Set-Content build/SHA256SUMS.txt -Encoding ascii
+          Get-Content build/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: |
+            build/Loopscape-Setup-*.exe
+            build/SHA256SUMS.txt
+
+      - name: Draft release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' (Get-Item build/Loopscape-Setup-*.exe).FullName build/SHA256SUMS.txt `
+            --draft --title 'Loopscape ${{ steps.ver.outputs.version }}' `
+            --notes 'Download Loopscape-Setup-${{ steps.ver.outputs.version }}.exe and run it. SHA256SUMS.txt has its checksum. Built by the release workflow from this tag.'

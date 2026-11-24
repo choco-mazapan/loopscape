@@ -1,0 +1,24 @@
+{
+  "baseUrl": "https://github.com/choco-mazapan/loopscape/releases/download/styles-v1/",
+  "styles": [
+    { "name": "aurora", "file": "aurora.mp4", "size": 45876668, "sha256": "61924007787eb1a852cda79be7f880489ff3a5c78f95a5dd9bd2c2cd91751ece" },
+    { "name": "bluesky", "file": "bluesky.mp4", "size": 11762283, "sha256": "06d74422b262125e5fa36819dfb0a155dc1e1bad48ee784d96f0bfcc4bced932" },
+    { "name": "bounce", "file": "bounce.mp4", "size": 38541201, "sha256": "3a07c0b7c456672bb2e8ae29b8ef7dc9c21a48f91a0f9737166c329eb6c11c70" },
+    { "name": "crt", "file": "crt.mp4", "size": 13636099, "sha256": "2e8f835b17a5cd0e345efd371e3916de43d9ea0a0cdc2a2b8b2e5380ae0f45dd" },
+    { "name": "deepsea", "file": "deepsea.mp4", "size": 16241883, "sha256": "cf2d6b26b58cddd2f601879836564a5a9e99f81c9486e4493c87f1df7cf3656e" },
+    { "name": "dunes", "file": "dunes.mp4", "size": 11056934, "sha256": "ec74df9fa1559bb530d73c70c6624e685d302b57fa05b84a8635d0b81c410038" },
+    { "name": "embers", "file": "embers.mp4", "size": 40961631, "sha256": "5837b3d7d7af66432a0d7cc9ebd1f27db4b35865ebfdf58cfefb7b1c75324812" },
+    { "name": "halftone", "file": "halftone.mp4", "size": 17813683, "sha256": "c02e7c59040634cd28df13a04323e8828343e2845efbae7a0d9176df2679daa2" },
+    { "name": "lake", "file": "lake.mp4", "size": 16120265, "sha256": "826bbcbc2d7f3780a3a7f079d2e6af4114cb24e64e4fa6d3e414c10d090011c4" },
+    { "name": "moon", "file": "moon.mp4", "size": 20528537, "sha256": "0c9e3fa944ca48d70a61e0c5bd5409aca182e4ed3d6ced73dd62150300603d5b" },
+    { "name": "nebula", "file": "nebula.mp4", "size": 55063395, "sha256": "93ad35707f3516a17bfb09d81c73d3029ccc5c2876260957f7410cc33130246e" },
+    { "name": "nightclouds", "file": "nightclouds.mp4", "size": 8785132, "sha256": "9d2b15f97a489911543835616a04ab3dea8416d675f4a1223e79847d91eb690c" },
+    { "name": "pastel", "file": "pastel.mp4", "size": 24144228, "sha256": "fdda39ffa28aaed2d58dc26b3857d3c8418260c1c143ca176de2b06910600d8f" },
+    { "name": "pixelclouds", "file": "pixelclouds.mp4", "size": 19711102, "sha256": "a1d60a411ff85393401b4e1b8ba4e5a14bf1bdbb6892a557e8ecb6654318288e" },
+    { "name": "rain", "file": "rain.mp4", "size": 51527824, "sha256": "52094f07608cd672e8f36985e43fc6b51cdbb1729c3746f8ffb57e869cc0e6f6" },
+    { "name": "riso", "file": "riso.mp4", "size": 46581885, "sha256": "5a7b35649cfab2bf20ce1bbf4d8a6be4dd80fc35bd80f4ef521c834d5e65dac0" },
+    { "name": "shore", "file": "shore.mp4", "size": 27893113, "sha256": "8d586fe18770a3afee35f1fee153e951adb79a01603d14df907d291261a5b7b8" },
+    { "name": "spectrum", "file": "spectrum.mp4", "size": 27624168, "sha256": "753288473eb7106c98ed1c804c7ed09a2aed55f753db3b531fb0342e56fc61ed" },
+    { "name": "sunset", "file": "sunset.mp4", "size": 31692262, "sha256": "c0a5d16d6f2441a8f426ee8a5c5c65cfa4ab072e5f36d2518413a5a62be97aa5" }
+  ]
+}

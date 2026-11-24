@@ -1,0 +1,29 @@
+Loopscape - third-party software and assets
+================================================
+
+Loopscape itself is MIT licensed (see LICENSE). The installer also includes or installs:
+
+mpv (bundled in the "mpv" folder; plays the wallpaper video)
+  https://mpv.io/  -  Windows build by shinchiro: https://github.com/shinchiro/mpv-winbuild-cmake
+  Licensed under the GNU General Public License v2 or later (this build includes GPL components).
+  Source code: https://github.com/mpv-player/mpv  and the build scripts above. The exact version is shown by
+  "mpv\mpv.exe --version". You may also request the corresponding source from the project's GitHub issues page.
+
+Rainmeter (optional; installed only if you tick it in setup; runs the widgets)
+  https://www.rainmeter.net/  -  GNU General Public License v2. Installed by its own official installer.
+  Source code: https://github.com/rainmeter/rainmeter
+
+Space Grotesk font (widgets)
+  https://github.com/floriankarsten/space-grotesk  -  SIL Open Font License 1.1
+  (Rainmeter\Skins\LaptopInfo\@Resources\Fonts\SpaceGrotesk-LICENSE.txt)
+
+Geist Pixel font (widgets)
+  https://github.com/vercel/geist-font  -  SIL Open Font License 1.1
+  (Rainmeter\Skins\LaptopInfo\@Resources\Fonts\GeistPixel-LICENSE.txt)
+
+Online services used while running (no account or API key; nothing about you is sent beyond the request itself):
+  Open-Meteo weather and geocoding  https://open-meteo.com/   (weather for the city you typed)
+  BigDataCloud reverse geocoding     https://www.bigdatacloud.com/  (only if you choose "Windows location")
+  GitHub Releases                    https://github.com/choco-mazapan/loopscape/releases  (style downloads)
+
+The wallpaper videos were rendered by this project (wallpaper\styles\Render.cs) and are covered by its MIT license.

@@ -1,0 +1,11 @@
+{
+  "_comment": "Third-party files the release build downloads. Each must match its sha256; get-deps.ps1 refuses anything else. To update: change url, set sha256 to TODO, run build\\get-deps.ps1 once (it prints the hash of what it fetched), check that file, then put the hash here.",
+  "mpv": {
+    "url": "TODO: https://.../mpv-x86_64-YYYYMMDD-git-xxxxxxx.7z (shinchiro build; also mirrored at sourceforge.net/projects/mpv-player-windows)",
+    "sha256": "TODO"
+  },
+  "rainmeter": {
+    "url": "TODO: https://github.com/rainmeter/rainmeter/releases/download/v4.5.x.xxxx/Rainmeter-4.5.x.exe",
+    "sha256": "TODO"
+  }
+}

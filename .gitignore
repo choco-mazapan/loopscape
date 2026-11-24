@@ -1,0 +1,16 @@
+# Built from source by sync.ps1 (csc)
+*.exe
+# Dev screenshots (show local desktop / city)
+/readability-options.png
+/shore-desktop.png
+/shore-loop-sheet.png
+/shore-preview.png
+# Rendered loop videos
+*.mp4
+*.webm
+# Build output (build\build.ps1, stage.ps1, get-deps.ps1, make-styles-release.ps1, iscc)
+/build/out/
+/build/stage/
+/build/deps/
+/build/styles-release/
+/build/SHA256SUMS.txt
