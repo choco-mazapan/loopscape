@@ -1,6 +1,6 @@
 # Loopscape
 
-**Loopscape** is a live wallpaper for Windows 10 and 11. It plays looping, hand-made animated landscapes (shores, pixel clouds, auroras, nebulas and more) behind your desktop icons, with dark styles at night. It comes with **LaptopInfo**, a Rainmeter skin with clock, battery, weather, Wi‑Fi and network widgets.
+**Loopscape** is a live wallpaper for Windows 10 and 11. It plays looping animated landscapes (shores, pixel clouds, auroras, nebulas and more) behind your desktop icons, with dark styles at night. It comes with **LaptopInfo**, a Rainmeter skin with clock, battery, weather, Wi‑Fi and network widgets.
 
 ![Riso style with the LaptopInfo widgets](screenshots/riso.jpg)
 
