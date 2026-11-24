@@ -243,6 +243,7 @@ static class Loopscape
         string args = "--wid=" + host.ToInt64() +
                       " --loop-file=inf --no-audio --no-osc --no-input-default-bindings --input-cursor=no" +
                       " --hwdec=auto-safe --panscan=1.0 --really-quiet --idle=no" +
+                      " --media-controls=no" +   // keep the wallpaper out of Windows' media flyout (SMTC)
                       " --input-ipc-server=\\\\.\\pipe\\" + PipeName;
         if (startOnWallpaper) args += " \"--vf=" + BlendFilter(1) + "\"";
         args += " " + Get("mpvArgs", "") + " \"" + video + "\"";
