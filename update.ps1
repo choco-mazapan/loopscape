@@ -81,7 +81,8 @@ function Get-Version($ref) {
 }
 
 # ---------------- window ----------------
-# Sizes are for 96 DPI; the window scales them to the screen's DPI.
+# Sizes are for 96 DPI. They're scaled to the screen's DPI by hand after the layout (WinForms' own AutoScaleMode scaled
+# some controls twice at 125% and left the list's columns alone).
 Add-Type -Namespace LoopscapeUpdate -Name Native -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
 [LoopscapeUpdate.Native]::SetProcessDPIAware() | Out-Null
 [Windows.Forms.Application]::EnableVisualStyles()
@@ -91,8 +92,7 @@ $dim       = [Drawing.Color]::FromArgb(96, 96, 96)
 
 $form = New-Object Windows.Forms.Form
 $form.SuspendLayout()
-$form.AutoScaleDimensions = New-Object Drawing.SizeF(96, 96)
-$form.AutoScaleMode = 'Dpi'
+$form.AutoScaleMode = 'None'
 $form.Text = 'Update Loopscape'
 $form.Font = $font
 $form.ClientSize = New-Object Drawing.Size(560, 470)
@@ -152,6 +152,12 @@ $cancel  = New-Button 'Cancel' 438
 $primary.Enabled = $false
 $form.AcceptButton = $primary; $form.CancelButton = $cancel
 $form.ResumeLayout($false)
+$g = $form.CreateGraphics(); $scale = $g.DpiX / 96; $g.Dispose()
+if ($scale -ne 1) {
+  $form.ClientSize = New-Object Drawing.Size([int](560 * $scale), [int](470 * $scale))
+  foreach ($c in $form.Controls) { $c.SetBounds([int]($c.Left * $scale), [int]($c.Top * $scale), [int]($c.Width * $scale), [int]($c.Height * $scale)) }
+  foreach ($col in $list.Columns) { $col.Width = [int]($col.Width * $scale) }
+}
 
 $state = @{ Step = 'fetch'; Busy = $true; Proc = $null; Stashed = $false; Branch = ''; Dirty = @(); NewVersion = '' }
 $form.add_FormClosing({ param($s, $e) if ($state.Busy -and $state.Step -ne 'fetch') { $e.Cancel = $true } })
@@ -276,18 +282,18 @@ function Begin-Update {
   $state.Proc = Start-Proc 'powershell.exe' $syncArgs
 }
 
-function Finish-Update {
-  $out = $state.Proc.Out
-  if ($state.Proc.Code -ne 0) {
+function Finish-Update($proc) {
+  $out = $proc.Out
+  if ($proc.Code -ne 0) {
     $why = ($out | Where-Object { $_ -notmatch '^progress \d+ ' } | Select-Object -Last 4) -join "`n"
     Fail ("The new code arrived, but installing it failed:`n$why" + (& $stashNote))
     return
   }
-  $text = "This PC now runs version $($state.NewVersion)."
+  $text = if ($DryRun) { "Dry run: nothing was changed. A real update would install version $($state.NewVersion)." }
+          else { "This PC now runs version $($state.NewVersion)." }
   $installed = @($out | Where-Object { $_ -match '^\s{2}\S' } | ForEach-Object { '    ' + $_.Trim() })
   if ($installed.Count -gt 0) { $text += "`n`nUpdated on this PC:`n" + ($installed -join "`n") }
   else { $text += "`n`nNothing on this PC needed to change." }
-  if ($DryRun) { $text += "`n`nThis was a dry run: nothing was changed." }
   Show-Result "Loopscape is updated" ($text + (& $stashNote)) $false
 }
 
@@ -304,7 +310,12 @@ $timer.add_Tick({
   Poll-Proc $p
   if ($state.Step -eq 'sync') {
     foreach ($l in $p.NewOut) {
-      if ($l -match '^progress (\d+) (.*)$') { $progress.Value = [Math]::Min(100, 20 + [int]$Matches[1] * 80 / 100); $status.Text = "$($Matches[2])$ellipsis" }
+      if ($l -match '^progress (\d+) (.*)$') {
+        $percent = [int]$Matches[1]
+        $progress.Value = [Math]::Min(100, 20 + $percent * 80 / 100)
+        $status.Text = if ($percent -ge 100) { $Matches[2] } else { "$($Matches[2])$ellipsis" }
+        if ($percent -eq 60) { Save-Screenshot 'progress' }
+      }
     }
   }
   if (-not $p.Done) { return }
@@ -313,7 +324,7 @@ $timer.add_Tick({
     if ($p.Code -ne 0) { Fail "Couldn't get the latest version from GitHub. Check your internet connection and try again." }
     else { Show-Changes }
   }
-  elseif ($state.Step -eq 'sync') { Finish-Update }
+  elseif ($state.Step -eq 'sync') { Finish-Update $p }
 })
 $form.add_Shown({
   $form.TopMost = $true; $form.Activate(); $form.TopMost = $false   # started from the tray: come to the front
