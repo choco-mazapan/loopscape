@@ -221,6 +221,8 @@ local function apply(var, value)
     SKIN:Bang('!UpdateMeasure', 'MeasureNaturalWidth', w)   -- not '*': that would fire the weather/Wi-Fi timers
     SKIN:Bang('!UpdateMeter', '*', w)
     SKIN:Bang('!UpdateMeter', '*', w)
+    -- the clock's AM/PM text can move on the second pass, after its pill
+    if w == 'Loopscape\\Clock' then SKIN:Bang('!UpdateMeter', 'Pill_MeterAmPm', w) end
     SKIN:Bang('!Redraw', w)
   end
   if var == 'SnapBottomMargin' then

@@ -79,7 +79,11 @@ local function key(config) return (config:gsub('[^%w]', '_')) end
 -- wrap, so the first pass gives them the old widths. A change of colour alone needs one.
 local function redrawAll(onePass)
   SKIN:Bang('!UpdateMeter', '*')
-  if not onePass then SKIN:Bang('!UpdateMeter', '*') end
+  if not onePass then
+    SKIN:Bang('!UpdateMeter', '*')
+    -- the clock's AM/PM text can move on the second pass, after its pill: one more for that pill
+    if SKIN:GetMeter('Pill_MeterAmPm') then SKIN:Bang('!UpdateMeter', 'Pill_MeterAmPm') end
+  end
   SKIN:Bang('!Redraw')
 end
 

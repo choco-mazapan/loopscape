@@ -19,6 +19,7 @@ end
 local function redraw()
   SKIN:Bang('!UpdateMeter', '*')
   SKIN:Bang('!UpdateMeter', '*')
+  SKIN:Bang('!UpdateMeter', 'Pill_MeterAmPm')   -- the AM/PM text can move on the second pass, after its pill
   SKIN:Bang('!Redraw')
 end
 
