@@ -1,0 +1,71 @@
+# Checks every pull request (and every push to main) before it can reach anyone's PC:
+#   - compiles Loopscape, WeatherFetch, WifiInfo and Render with build\build.ps1, the same build that sync.ps1,
+#     Update Loopscape and the release workflow use
+#   - parses every PowerShell script, so a syntax error fails here instead of in the middle of an update
+#   - checks that rainmeter\Loopscape\Settings\Settings.ini matches what rainmeter\gen-settings-ini.ps1 generates
+#   - parses every Lua script with Lua 5.1 (the version Rainmeter runs) and every Python script in the skill
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Build and PowerShell
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile the programs
+        shell: pwsh
+        run: ./build/build.ps1 -OutDir build/out
+
+      - name: Parse the PowerShell scripts
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem -Recurse -Filter *.ps1 -File) {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            foreach ($e in $errors) {
+              $bad++
+              "::error file=$(Resolve-Path -Relative $f.FullName),line=$($e.Extent.StartLineNumber)::$($e.Message)"
+            }
+          }
+          if ($bad) { throw "$bad PowerShell syntax error(s)" }
+          'All PowerShell scripts parse.'
+
+      - name: Settings panel is regenerated
+        shell: pwsh
+        run: |
+          $tmp = Join-Path $env:RUNNER_TEMP 'Settings.ini'
+          ./rainmeter/gen-settings-ini.ps1 -Out $tmp | Out-Null
+          $want = (Get-Content -Raw $tmp) -replace "`r", ''
+          $have = (Get-Content -Raw rainmeter/Loopscape/Settings/Settings.ini) -replace "`r", ''
+          if ($want -ne $have) {
+            '::error file=rainmeter/Loopscape/Settings/Settings.ini::Settings.ini is out of date. Run rainmeter\gen-settings-ini.ps1 and commit the result.'
+            exit 1
+          }
+          'Settings.ini matches gen-settings-ini.ps1.'
+
+  scripts:
+    name: Lua and Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse the Lua scripts (Lua 5.1, like Rainmeter)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1 > /dev/null
+          status=0
+          while IFS= read -r f; do luac5.1 -p "$f" || status=1; done < <(git ls-files '*.lua')
+          exit $status
+
+      - name: Compile the Python scripts
+        run: python3 -m py_compile $(git ls-files 'skills/*.py')
