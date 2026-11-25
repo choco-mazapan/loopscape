@@ -32,12 +32,12 @@ Works on Windows 10 and 11 (64-bit).
 
 The installer isn't code-signed yet, so Windows SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**. `SHA256SUMS.txt` on the release page has the installer's checksum, and the [release workflow](.github/workflows/release.yml) log shows it was built from the tagged source.
 
-Four styles come with the installer (riso, shore, pixel clouds, aurora). On the **Wallpaper styles** page, choose whether to download the other 15 after setup (about 250 MB): all of them, none, or the ones you tick. They download in the background, about 5–55 MB each. Any you skip download the first time you pick them, or all at once from the tray icon's menu.
+Four styles come with the installer (riso, shore, pixel clouds, aurora). On the **Wallpaper styles** page, choose whether to download the other 15 after setup (about 250 MB): all of them, none, or the ones you tick. They download in the background, about 2–50 MB each depending on the video format. Any you skip download the first time you pick them, or all at once from the tray icon's menu.
 
 ## Usage
 
 - **Pick a style:** click the tray icon for the widgets' Settings panel, or right-click it for the style menu.
-- **Rotate styles:** choose *Rotate day/night* in the Settings panel. It changes style every hour, with dark styles at night.
+- **Rotate styles:** choose *Rotate day/night* in the Settings panel. It changes style every hour by default (*Change every* in the Rotation section), with dark styles at night.
 - **Skip to the next style:** Win+Alt+N.
 - **Start with Windows:** a checkbox in the tray menu (also in Task Manager → Startup apps).
 - **Video format:** the tray menu's *Video format*. *Automatic* picks the smallest format your graphics chip plays (AV1, then HEVC, then H.264), so the CPU stays idle. On a desktop where battery doesn't matter you can pick AV1 for smaller files even if the CPU has to decode it. Changing it downloads your styles again in that format. Styles that don't look as good in a format are only published in H.264.
