@@ -180,7 +180,7 @@ A 'Meter=Shape'
 A 'Shape=Line #Pad#,(#Pad#+80),(#PanelWidth#-#Pad#),(#Pad#+80) | StrokeWidth 1 | Stroke Color 255,255,255,40'
 A ''
 
-# ---- Wallpaper tab: "Playing now" preview (settings.lua fills it from @Resources\wallstatus.txt; hovering a tile
+# ---- Wallpaper tab: "Playing now" preview (settings.lua fills it from %LOCALAPPDATA%\Loopscape\wallstatus.txt; hovering a tile
 #      previews that style instead) ----
 A '; ----- playing now / preview -----'
 A '[MeterPreviewFrame]'; A 'Meter=Shape'; A 'Group=TabWallpaper'

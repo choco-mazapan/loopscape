@@ -2,9 +2,11 @@
 // Location: the city typed in the widget Settings (looked up once with Open-Meteo's geocoder), or, if chosen there,
 // the Windows location service (Windows asks for permission; the city name then comes from BigDataCloud).
 // There is no IP-address lookup. Weather: Open-Meteo (free, no API key). All requests are HTTPS.
-// Weather is fetched at most once an hour (cached in weathercache.txt next to the exe); a Windows location at most
+// Weather is fetched at most once an hour (cached in weathercache.txt); a Windows location at most
 // once a day (lastlocation.txt), a typed city only when it changes (citylocation.txt). "force" skips the caches;
 // "nowcast" (the Rain widget) keeps the cache for 15 minutes only, so the rain for the next hours stays current.
+// The cache files and weathernow.txt (for Loopscape.exe) are in %LOCALAPPDATA%\Loopscape, not next to the exe in
+// Documents, which OneDrive may sync.
 // Usage: WeatherFetch.exe [fahrenheit|celsius] [force|nowcast|""] [city|windows] ["City name"]
 // Build: csc /target:exe /r:System.Device.dll /r:System.Windows.Forms.dll /win32icon:Loopscape.ico /out:Loopscape\@Resources\WeatherFetch.exe WeatherFetch.cs
 using System;
@@ -64,7 +66,13 @@ static class WeatherFetch
     // Location + weather are fetched at most once per CacheMinutes; every run in between (timer, skin refresh, unit
     // change) prints the cached result. Values are cached in Celsius and converted when printed.
     const int CacheMinutes = 60, NowcastMinutes = 15;
-    static string CachePath { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "weathercache.txt"); } }
+    static string StateFile(string name)
+    {
+        string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Loopscape");
+        try { Directory.CreateDirectory(dir); } catch { }
+        return Path.Combine(dir, name);
+    }
+    static string CachePath { get { return StateFile("weathercache.txt"); } }
 
     [STAThread] // the Windows location API needs a single-threaded apartment
     static int Main(string[] args)
@@ -167,7 +175,7 @@ static class WeatherFetch
     static bool Geocode(string query, bool force, out double lat, out double lon, out string name, out string error)
     {
         lat = lon = double.NaN; name = ""; error = null;
-        string cache = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "citylocation.txt");
+        string cache = StateFile("citylocation.txt");
         try
         {
             if (!force && File.Exists(cache))
@@ -225,7 +233,7 @@ static class WeatherFetch
         }
         else
         {
-        string cache = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lastlocation.txt");
+        string cache = StateFile("lastlocation.txt");
         double[] saved = null; string savedSource = "", savedCity = ""; TimeSpan savedAge = TimeSpan.MaxValue;
         try
         {
@@ -360,10 +368,10 @@ static class WeatherFetch
                     outp.Add("rain=" + t[0] + "|" + string.Join(",", p.Select(v => v == "null" ? "0" : v)));
             }
             else outp.Add("rain=");
-            // For Loopscape (night by sunset, wallpaper that matches the weather): weathernow.txt next to this exe
+            // For Loopscape (night by sunset, wallpaper that matches the weather): weathernow.txt
             try
             {
-                File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "weathernow.txt"),
+                File.WriteAllText(StateFile("weathernow.txt"),
                     "date=" + DateTime.Now.ToString("yyyy-MM-dd", Inv) + "\r\nfetched=" + DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss", Inv) +
                     "\r\ncode=" + Num(c, "weather_code").ToString("0", Inv) + "\r\nisday=" + Num(c, "is_day").ToString("0", Inv) +
                     "\r\nsunrise=" + sunrise + "\r\nsunset=" + sunset + "\r\nsunrise2=" + sunrise2 + "\r\n");

@@ -2,6 +2,10 @@
 -- and changes it on click. Preferences live in @Resources\Settings.inc (included by both widgets); changing one
 -- rewrites that file and applies it to the running widgets.
 
+-- Files shared with Loopscape.exe while it runs (what it plays, commands, colours) live in %LOCALAPPDATA%\Loopscape,
+-- outside Documents, which OneDrive may sync. Loopscape.exe creates the folder.
+local STATE = (os.getenv('LOCALAPPDATA') or ((os.getenv('USERPROFILE') or '') .. '\\AppData\\Local')) .. '\\Loopscape\\'
+
 -- The widgets: config name (= folder = ini name), its Show<name> setting, and whether it's shown when Settings.inc
 -- doesn't say (an older Settings.inc; the installer shows the first three then). In MeterWTile1..N order.
 local WIDGET_TILES = {
@@ -90,12 +94,12 @@ local function show()
   SKIN:Bang('!Redraw')
 end
 
--- ---------- "Playing now" (Loopscape writes @Resources\wallstatus.txt) and tile previews ----------
+-- ---------- "Playing now" (Loopscape writes %LOCALAPPDATA%\Loopscape\wallstatus.txt) and tile previews ----------
 local hovered = 0
 local lastStatus = nil
 
 local function readStatus()
-  local f = io.open(SKIN:GetVariable('@') .. 'wallstatus.txt', 'r')
+  local f = io.open(STATE .. 'wallstatus.txt', 'r')
   if not f then return {} end
   local t = {}
   for line in f:lines() do local k, v = line:match('^(%w+)=(.*)$'); if k then t[k] = v end end
@@ -293,15 +297,15 @@ function SetCity()
   end
 end
 
--- Skip to the next wallpaper: Loopscape watches @Resources\wallnext.txt
+-- Skip to the next wallpaper: Loopscape watches %LOCALAPPDATA%\Loopscape\wallnext.txt
 function NextWallpaper()
-  local f = io.open(SKIN:GetVariable('@') .. 'wallnext.txt', 'w')
+  local f = io.open(STATE .. 'wallnext.txt', 'w')
   if f then f:write(os.time(), ' ', os.clock(), '\n'); f:close() end
 end
 
--- Update Loopscape: Loopscape picks up "update" in @Resources\wallcmd.txt and runs the update (or opens the Releases page)
+-- Update Loopscape: Loopscape picks up "update" in %LOCALAPPDATA%\Loopscape\wallcmd.txt and runs the update (or opens the Releases page)
 function UpdateLoopscape()
-  local f = io.open(SKIN:GetVariable('@') .. 'wallcmd.txt', 'a')
+  local f = io.open(STATE .. 'wallcmd.txt', 'a')
   if f then f:write('update\n'); f:close() end
 end
 
