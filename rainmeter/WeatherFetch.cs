@@ -3,9 +3,10 @@
 // the Windows location service (Windows asks for permission; the city name then comes from BigDataCloud).
 // There is no IP-address lookup. Weather: Open-Meteo (free, no API key). All requests are HTTPS.
 // Weather is fetched at most once an hour (cached in weathercache.txt next to the exe); a Windows location at most
-// once a day (lastlocation.txt), a typed city only when it changes (citylocation.txt). "force" skips the caches.
-// Usage: WeatherFetch.exe [fahrenheit|celsius] [force|""] [city|windows] ["City name"]
-// Build: csc /target:exe /r:System.Device.dll /r:System.Windows.Forms.dll /win32icon:Loopscape.ico /out:LaptopInfo\@Resources\WeatherFetch.exe WeatherFetch.cs
+// once a day (lastlocation.txt), a typed city only when it changes (citylocation.txt). "force" skips the caches;
+// "nowcast" (the Rain widget) keeps the cache for 15 minutes only, so the rain for the next hours stays current.
+// Usage: WeatherFetch.exe [fahrenheit|celsius] [force|nowcast|""] [city|windows] ["City name"]
+// Build: csc /target:exe /r:System.Device.dll /r:System.Windows.Forms.dll /win32icon:Loopscape.ico /out:Loopscape\@Resources\WeatherFetch.exe WeatherFetch.cs
 using System;
 using System.Device.Location;
 using System.Globalization;
@@ -28,7 +29,7 @@ static class WeatherFetch
     static string Get(string url)
     {
         var req = (HttpWebRequest)WebRequest.Create(url);
-        req.UserAgent = "LaptopInfo-widget";
+        req.UserAgent = "Loopscape-widget";
         req.Timeout = 10000;
         using (var resp = req.GetResponse())
         using (var r = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
@@ -62,7 +63,7 @@ static class WeatherFetch
 
     // Location + weather are fetched at most once per CacheMinutes; every run in between (timer, skin refresh, unit
     // change) prints the cached result. Values are cached in Celsius and converted when printed.
-    const int CacheMinutes = 60;
+    const int CacheMinutes = 60, NowcastMinutes = 15;
     static string CachePath { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "weathercache.txt"); } }
 
     [STAThread] // the Windows location API needs a single-threaded apartment
@@ -73,12 +74,13 @@ static class WeatherFetch
         bool f = args.Length > 0 && !args[0].ToLowerInvariant().StartsWith("c");
         // After the unit: "force" ("Refresh weather now" in the widget's menu), the mode (city / windows) and the city,
         // in any order; empty arguments are skipped
-        bool force = false;
+        bool force = false, nowcast = false;
         string mode = null, cityQuery = "";
         for (int i = 1; i < args.Length; i++)
         {
             string a = args[i].Trim(), low = a.ToLowerInvariant();
             if (low == "force") force = true;
+            else if (low == "nowcast") nowcast = true;
             else if (mode == null && (low == "city" || low == "windows")) mode = low;
             else if (a.Length > 0 && cityQuery.Length == 0) cityQuery = CleanCity(a);
         }
@@ -93,7 +95,8 @@ static class WeatherFetch
             if (File.Exists(CachePath))
             {
                 string[] all = File.ReadAllLines(CachePath);
-                if (all.Length > 2 && all[0].StartsWith("fetched=") && all[1] == where)
+                // (a cache from before the rain series existed is fetched again)
+                if (all.Length > 2 && all[0].StartsWith("fetched=") && all[1] == where && all.Any(l => l.StartsWith("rain=")))
                 {
                     age = DateTime.UtcNow - new DateTime(long.Parse(all[0].Substring(8), Inv), DateTimeKind.Utc);
                     cached = new string[all.Length - 2];
@@ -104,7 +107,7 @@ static class WeatherFetch
         catch { cached = null; }
 
         string[] lines = cached;
-        if (force || cached == null || age < TimeSpan.Zero || age >= TimeSpan.FromMinutes(CacheMinutes))
+        if (force || cached == null || age < TimeSpan.Zero || age >= TimeSpan.FromMinutes(nowcast ? NowcastMinutes : CacheMinutes))
         {
             string error;
             string[] fresh = Fetch(force, mode, cityQuery, out error);
@@ -310,6 +313,7 @@ static class WeatherFetch
                          "&longitude=" + lon.ToString("0.###", Inv) +
                          "&current=temperature_2m,weather_code,is_day" +
                          "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&forecast_days=4" +
+                         "&minutely_15=precipitation&forecast_minutely_15=24" +
                          "&temperature_unit=celsius&timezone=auto";
             string wj = Get(url);
             var cur = Regex.Match(wj, "\"current\"\\s*:\\s*\\{([^}]*)\\}");
@@ -336,6 +340,7 @@ static class WeatherFetch
                 sunrise = hm(rise, 0); sunset = hm(set, 0); sunrise2 = hm(rise, 1);
                 if (sunrise.Length > 0) outp.Add("sunrise=" + sunrise);
                 if (sunset.Length > 0) outp.Add("sunset=" + sunset);
+                if (sunrise2.Length > 0) outp.Add("sunrise2=" + sunrise2);
                 string[] days = Arr(d, "time"), codes = Arr(d, "weather_code"), hi = Arr(d, "temperature_2m_max"), lo = Arr(d, "temperature_2m_min");
                 for (int i = 1; i <= 3 && i < days.Length && i < codes.Length && i < hi.Length && i < lo.Length; i++)
                 {
@@ -345,6 +350,16 @@ static class WeatherFetch
                     outp.Add("fc" + i + "=" + label + "|" + codes[i] + "|" + hi[i] + "|" + lo[i]);
                 }
             }
+            // Rain for the next 6 hours in 15-minute steps (mm in each step): rain=2026-11-24T14:15|0,0,0.1,...
+            // (local time at the location; the Rain widget lines it up with the clock)
+            var m15 = Regex.Match(wj, "\"minutely_15\"\\s*:\\s*\\{([^}]*)\\}");
+            if (m15.Success)
+            {
+                string[] t = Arr(m15.Groups[1].Value, "time"), p = Arr(m15.Groups[1].Value, "precipitation");
+                if (t.Length > 0 && p.Length > 0)
+                    outp.Add("rain=" + t[0] + "|" + string.Join(",", p.Select(v => v == "null" ? "0" : v)));
+            }
+            else outp.Add("rain=");
             // For Loopscape (night by sunset, wallpaper that matches the weather): weathernow.txt next to this exe
             try
             {

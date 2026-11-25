@@ -1,7 +1,7 @@
 # Draws dot-matrix Wi-Fi signal icons (same dot style as the weather icons).
 # wifi-0..wifi-3 = 0..3 lit arcs above the dot; wifi-off = everything dimmed.
 param(
-  [string]$OutDir = "$PSScriptRoot\LaptopInfo\@Resources\WiFi",
+  [string]$OutDir = "$PSScriptRoot\Loopscape\@Resources\WiFi",
   [int]$Pitch = 3,
   [double]$Dot = 2.4
 )

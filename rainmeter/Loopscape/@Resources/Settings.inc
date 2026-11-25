@@ -1,4 +1,4 @@
-; Shared preferences for the LaptopInfo widgets. The Settings panel (right-click a widget > Settings...) edits
+; Shared preferences for the Loopscape widgets. The Settings panel (right-click a widget > Settings...) edits
 ; this file; both widgets include it with @Include2=#@#Settings.inc.
 [Variables]
 ; Stacked widgets take the width of the widest one (1 = on)
@@ -32,6 +32,16 @@ TextColorMode=contrast
 ShowClock=1
 ; Wi-Fi widget shown (1) or hidden (0)
 ShowWiFi=1
+; Now Showing widget (the wallpaper on screen, with previous / pause / next buttons) shown (1) or hidden (0)
+ShowNowShowing=1
+; Sun & Moon widget (the sun's arc, next sunrise / sunset, moon phase) shown (1) or hidden (0)
+ShowSunMoon=0
+; Rain widget (rain or snow in the next 3 hours) shown (1) or hidden (0)
+ShowRain=0
+; System widget (processor, memory, free space on C:) shown (1) or hidden (0)
+ShowSystem=0
+; Calendar widget (this month, today ringed) shown (1) or hidden (0)
+ShowCalendar=0
 ; Wallpaper: rotate (dark styles at night), or a single style name (day: spectrum, halftone, bluesky, pixelclouds,
 ; sunset, riso, dunes, lake, pastel, crt, shore; night: nightclouds, aurora, nebula, moon, embers, deepsea, rain, bounce;
 ; or gradient)

@@ -15,11 +15,11 @@ Rainmeter (optional; installed only if you tick it in setup; runs the widgets)
 
 Space Grotesk font (widgets)
   https://github.com/floriankarsten/space-grotesk  -  SIL Open Font License 1.1
-  (Rainmeter\Skins\LaptopInfo\@Resources\Fonts\SpaceGrotesk-LICENSE.txt)
+  (Rainmeter\Skins\Loopscape\@Resources\Fonts\SpaceGrotesk-LICENSE.txt)
 
 Geist Pixel font (widgets)
   https://github.com/vercel/geist-font  -  SIL Open Font License 1.1
-  (Rainmeter\Skins\LaptopInfo\@Resources\Fonts\GeistPixel-LICENSE.txt)
+  (Rainmeter\Skins\Loopscape\@Resources\Fonts\GeistPixel-LICENSE.txt)
 
 Online services used while running (no account or API key; nothing about you is sent beyond the request itself):
   Open-Meteo weather and geocoding  https://open-meteo.com/   (weather for the city you typed)

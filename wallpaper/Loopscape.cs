@@ -59,7 +59,7 @@ static class Loopscape
 
     // The widgets' @Resources folder: Settings.inc (panel preferences), wallstyle.txt / wallstatus.txt (what we play),
     // weathernow.txt (written by WeatherFetch.exe), wallnext.txt (touched to skip to the next style)
-    public static readonly string Res = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"Rainmeter\Skins\LaptopInfo\@Resources");
+    public static readonly string Res = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"Rainmeter\Skins\Loopscape\@Resources");
 
     // Settings panel keys (Settings.inc) that override Loopscape.ini keys when set
     static readonly string[][] PanelKeys = {
@@ -276,7 +276,7 @@ static class Loopscape
         {
             string name = string.IsNullOrEmpty(video) ? "" : Path.GetFileNameWithoutExtension(video).ToLowerInvariant();
             if (name == lastPublished) return;
-            string res = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"Rainmeter\Skins\LaptopInfo\@Resources");
+            string res = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"Rainmeter\Skins\Loopscape\@Resources");
             if (!Directory.Exists(res)) return;
             File.WriteAllText(Path.Combine(res, "wallstyle.txt"), name + "\nfade=" + Math.Max(0, fadeMs) + "\n");
             lastPublished = name;
@@ -397,6 +397,7 @@ static class Loopscape
     static long ReadSkip() { try { long v; return long.TryParse(File.ReadAllText(Path.Combine(Dir, "skip.txt")).Trim(), out v) ? v : 0; } catch { return 0; } }
 
     static string Reason = "", NextChange = "";
+    static DateTime? NextAt;   // when the rotation next changes style (null: one style, no rotation)
     static string CurrentVideo() { long slot; int count; return CurrentVideo(out slot, out count); }
     // slot = rotation step number (changes every rotateMinutes), count = styles in the active list (1 = no rotation)
     static string CurrentVideo(out long slot, out int count)
@@ -407,7 +408,7 @@ static class Loopscape
         count = 1;
         string single = Environment.ExpandEnvironmentVariables(Get("video", Path.Combine(Dir, "loop.mp4")));
         var vids = StyleList("rotate");
-        if (vids.Count == 0) { Reason = "One style"; NextChange = ""; return Available(single); }
+        if (vids.Count == 0) { Reason = "One style"; NextChange = ""; NextAt = null; return Available(single); }
         bool dark = IsDarkTime();
         bool sun; TimeSpan f, t; DarkWindow(out f, out t, out sun);
         Reason = dark ? "Night rotation" : "Day rotation";
@@ -420,6 +421,7 @@ static class Loopscape
         DateTime next = epoch.AddMinutes((slot + 1) * (double)minutes);
         DateTime? flip = NextDarkFlip();
         if (flip.HasValue && flip.Value < next) next = flip.Value;
+        NextAt = next;
         NextChange = next.ToString("HH:mm", CultureInfo.InvariantCulture) + (flip.HasValue && flip.Value == next ? (dark ? (sun ? " (sunrise)" : " (day)") : (sun ? " (sunset)" : " (night)")) : "");
         count = vids.Count;
         string why = null;
@@ -442,21 +444,29 @@ static class Loopscape
         return video;
     }
 
-    // Skip to the next style: in a rotation move one step on (or drop a weather pick); with one style, play the next
-    // style of the same kind (day or night) and save it as the chosen style.
-    static void Next()
+    // Skip to the next style (dir 1) or back to the previous one (dir -1): in a rotation move one step (or drop a
+    // weather pick, either way); with one style, play the next / previous style of the same kind (day or night) and
+    // save it as the chosen style.
+    static void Next() { Step(1); }
+    static void Step(int dir)
     {
         long slot; int count;
         string cur = CurrentVideo(out slot, out count);
         if (StyleList("rotate").Count > 0)
         {
-            if (Reason.StartsWith("Weather")) weatherSkippedSlot = slot;
-            else
+            bool step = true;
+            if (Reason.StartsWith("Weather"))
             {
-                skipOffset++;
+                weatherSkippedSlot = slot;
+                // back to the rotation's own pick, unless that is the same style (then step on from it)
+                step = string.Equals(CurrentVideo(), cur, StringComparison.OrdinalIgnoreCase);
+            }
+            if (step)
+            {
+                skipOffset += dir;
                 try { File.WriteAllText(Path.Combine(Dir, "skip.txt"), skipOffset.ToString(CultureInfo.InvariantCulture)); } catch { }
             }
-            Log("skip: next style in the rotation");
+            Log("skip: " + (dir > 0 ? "next" : "previous") + " style in the rotation");
             return;
         }
         var darkNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -470,7 +480,8 @@ static class Loopscape
         group.Sort(StringComparer.OrdinalIgnoreCase);
         if (group.Count < 2) return;
         int i = group.FindIndex(delegate (string p) { return StyleName(p) == name; });
-        string nextVid = group[(i + 1) % group.Count];
+        if (i < 0 && dir < 0) i = 0;   // not in the list (e.g. the gradient): "previous" lands on the last one
+        string nextVid = group[((i + dir) % group.Count + group.Count) % group.Count];
         SetLine(Path.Combine(Dir, "Loopscape.ini"), "video", nextVid, true);
         SetLine(Path.Combine(Res, "Settings.inc"), "WallpaperMode", StyleName(nextVid), false);
         Log("skip: " + StyleName(nextVid));
@@ -502,10 +513,16 @@ static class Loopscape
             CurrentVideo();
             string state = battery ? (onBattery == "pause" ? "paused (on battery)" : onBattery == "static" ? "still image (on battery)" : "")
                                    : (covered ? "paused (window covers the desktop)" : "");
+            if (userPaused && state.Length == 0) state = "paused";
             string dl = StyleDownloads.Status();   // e.g. "downloading Aurora 42%" or "download failed: Aurora"
             if (dl.Length > 0) state = state.Length > 0 ? dl + "; " + state : dl;
-            string text = "style=" + (string.IsNullOrEmpty(Playing) ? "" : StyleName(Playing)) + "\r\nreason=" + Reason +
-                          "\r\nnext=" + NextChange + "\r\nstate=" + state + "\r\n";
+            string style = string.IsNullOrEmpty(Playing) ? "" : StyleName(Playing);
+            // name / paused / rotating / nextat are for the Now Showing widget (nextat: Unix time of the next change)
+            long nextAt = NextAt.HasValue ? (long)(NextAt.Value.ToUniversalTime() - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds : 0;
+            string text = "style=" + style + "\r\nreason=" + Reason +
+                          "\r\nnext=" + NextChange + "\r\nstate=" + state +
+                          "\r\nname=" + (style == "loop" ? "Gradient" : Pretty(style)) + "\r\npaused=" + (userPaused ? "1" : "0") +
+                          "\r\nrotating=" + (StyleList("rotate").Count > 0 ? "1" : "0") + "\r\nnextat=" + nextAt + "\r\n";
             if (text == lastStatus) return;
             File.WriteAllText(Path.Combine(Res, "wallstatus.txt"), text);
             lastStatus = text;
@@ -547,6 +564,34 @@ static class Loopscape
     {
         try { string f = Path.Combine(Res, "wallnext.txt"); return File.Exists(f) ? File.GetLastWriteTimeUtc(f) : DateTime.MinValue; }
         catch { return DateTime.MinValue; }
+    }
+
+    // ----- commands from the widgets (Now Showing's buttons): @Resources\wallcmd.txt, one per line, appended by the
+    // widget and deleted once read: next, prev, pause, play, pick <style|rotate>. Pausing (also from the tray) freezes
+    // the video until play is pressed or Loopscape restarts; the rotation still moves on, as a frozen frame.
+    static volatile bool userPaused, wake;
+    static string CmdFile { get { return Path.Combine(Res, "wallcmd.txt"); } }
+    static bool CommandsWaiting() { try { return File.Exists(CmdFile); } catch { return false; } }
+    // Runs the queued commands; true if one may have changed the style
+    static bool RunCommands()
+    {
+        string[] lines;
+        try { if (!File.Exists(CmdFile)) return false; lines = File.ReadAllLines(CmdFile); File.Delete(CmdFile); }
+        catch { return false; }
+        bool changed = false;
+        foreach (string raw in lines)
+        {
+            string c = raw.Trim().ToLowerInvariant();
+            if (c == "next" || c == "prev") { Step(c == "next" ? 1 : -1); changed = true; }
+            else if (c == "pause" || c == "play") { userPaused = c == "pause"; Log("widget: " + c); }
+            else if (c.StartsWith("pick "))
+            {
+                string name = c.Substring(5).Trim();
+                if (Regex.IsMatch(name, "^[a-z0-9-]{1,40}$") && (name == "rotate" || name == "gradient" || Names.ContainsKey(name)))
+                { PickStyleNow(name); changed = true; }
+            }
+        }
+        return changed;
     }
 
     // ---------------- Battery stills ----------------
@@ -987,6 +1032,10 @@ static class Loopscape
         if (hk.Length > 0 && hk != "none") next.ShortcutKeyDisplayString = HotkeyLabel(hk);
         next.Click += delegate { nextRequested = true; };
         menu.Items.Add(next);
+        var pause = new System.Windows.Forms.ToolStripMenuItem("Pause animation");
+        pause.Checked = userPaused;
+        pause.Click += delegate { userPaused = !userPaused; wake = true; Log("tray: " + (userPaused ? "pause" : "play")); };
+        menu.Items.Add(pause);
 
         var change = new System.Windows.Forms.ToolStripMenuItem("Change wallpaper");
         change.DropDown.ImageScalingSize = new System.Drawing.Size(40, 24);
@@ -1059,10 +1108,10 @@ static class Loopscape
     {
         string rm = RainmeterExe();
         if (rm == null) { Log("tray: Rainmeter.exe not found"); return; }
-        try { Process.Start(rm, "!ActivateConfig \"LaptopInfo\\Settings\" \"Settings.ini\""); }
+        try { Process.Start(rm, "!ActivateConfig \"Loopscape\\Settings\" \"Settings.ini\""); }
         catch (Exception e) { Log("tray: could not open settings: " + e.Message); }
     }
-    // Is the Settings panel open? (Rainmeter.ini: [LaptopInfo\Settings] Active=1)
+    // Is the Settings panel open? (Rainmeter.ini: [Loopscape\Settings] Active=1)
     static bool SettingsPanelOpen()
     {
         try
@@ -1072,7 +1121,7 @@ static class Loopscape
             foreach (string raw in File.ReadAllLines(f))
             {
                 string l = raw.Trim();
-                if (l.StartsWith("[")) inSection = l.Equals(@"[LaptopInfo\Settings]", StringComparison.OrdinalIgnoreCase);
+                if (l.StartsWith("[")) inSection = l.Equals(@"[Loopscape\Settings]", StringComparison.OrdinalIgnoreCase);
                 else if (inSection && l.StartsWith("Active=", StringComparison.OrdinalIgnoreCase)) return l.Substring(7).Trim() != "0";
             }
         }
@@ -1107,7 +1156,7 @@ static class Loopscape
         // an open panel shows the new pick after a refresh
         string rm = RainmeterExe();
         if (rm != null && SettingsPanelOpen())
-            try { Process.Start(rm, "!Refresh \"LaptopInfo\\Settings\""); } catch { }
+            try { Process.Start(rm, "!Refresh \"Loopscape\\Settings\""); } catch { }
     }
 
     // ---------------- Start with Windows (HKCU\...\Run, listed in Task Manager > Startup apps) ----------------
@@ -1224,9 +1273,18 @@ static class Loopscape
                         long s2 = ConfigStamp();
                         if (s2 != iniStamp) { iniStamp = s2; LoadConfig(); }   // Next() may have saved a new single style
                     }
+                    // Now Showing's buttons (previous / next / pause / play / keep this style)
+                    if (CommandsWaiting() && RunCommands())
+                    {
+                        manualUntil = DateTime.Now.AddSeconds(10);
+                        long s3 = ConfigStamp();
+                        if (s3 != iniStamp) { iniStamp = s3; LoadConfig(); }
+                    }
 
                     bool battery = OnBattery();
-                    bool covered = pauseWhenCovered && DesktopCovered();
+                    // paused by the user: the video is frozen like under a covering window (style changes swap instantly)
+                    bool windowCovers = pauseWhenCovered && DesktopCovered();
+                    bool covered = windowCovers || userPaused;
                     bool wantVideo = !battery || onBattery != "static";
 
                     if (wantVideo)
@@ -1275,7 +1333,7 @@ static class Loopscape
                         hadMpv = false; failures = 0;
                     }
                     else UpdateBatteryStill();   // hourly still rotation while on battery
-                    PublishStatus(battery, onBattery, covered);
+                    PublishStatus(battery, onBattery, windowCovers);
                 }
                 catch (Exception e) { Log("error: " + e.Message); }
 
@@ -1287,6 +1345,7 @@ static class Loopscape
                     if (OnBattery() != wasBattery) break;
                     // a style picked in the Settings panel, or a skip, is handled right away, not on the next poll
                     if (nextRequested || ConfigStamp() != iniStamp || NextFileStamp() != nextStamp) break;
+                    if (wake || CommandsWaiting()) { wake = false; break; }   // a widget button / the tray's Pause
                     // a download finished or moved on: switch to it / update the panel's progress now
                     if (downloadDone) { downloadDone = false; break; }
                 }
@@ -1498,8 +1557,8 @@ static class Loopscape
     }
 }
 
-// Adaptive text colour for the LaptopInfo Rainmeter widgets (Settings > Adaptive text colour).
-// Samples the wallpaper just outside each widget and writes Documents\Rainmeter\Skins\LaptopInfo\@Resources\bgtheme.txt:
+// Adaptive text colour for the Loopscape Rainmeter widgets (Settings > Adaptive text colour).
+// Samples the wallpaper just outside each widget and writes Documents\Rainmeter\Skins\Loopscape\@Resources\bgtheme.txt:
 //   mode=<mode>
 //   W|<config>|text=R,G,B|pill=R,G,B,A|shadow=R,G,B,A                 colours for the whole widget
 //   L|<config>|<meter>|text=...|pill=...|shadow=...                  per-line colours (mode "perline")
@@ -1523,7 +1582,7 @@ static class WidgetThemes
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
     [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
 
-    static readonly string Res = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"Rainmeter\Skins\LaptopInfo\@Resources");
+    static readonly string Res = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"Rainmeter\Skins\Loopscape\@Resources");
     static readonly Dictionary<string, bool> DarkText = new Dictionary<string, bool>();   // hysteresis per widget/line
     static string lastWritten = null;
     const int Gap = 8, PerSide = 8;
@@ -1601,7 +1660,7 @@ static class WidgetThemes
             int slash = rel.LastIndexOf('\\');
             if (slash <= 0) return true;
             string cfg = rel.Substring(0, slash);
-            if (!cfg.StartsWith(@"LaptopInfo\", StringComparison.OrdinalIgnoreCase)) return true;
+            if (!cfg.StartsWith(@"Loopscape\", StringComparison.OrdinalIgnoreCase)) return true;
             if (cfg.EndsWith("SnapGuides") || cfg.EndsWith("Settings") || cfg.EndsWith("ViewMenu")) return true;
             RECT r; if (GetWindowRect(h, out r)) o[cfg] = r;
             return true;

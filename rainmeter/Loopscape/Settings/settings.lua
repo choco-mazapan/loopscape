@@ -1,11 +1,18 @@
--- LaptopInfo settings panel: three tabs (Wallpaper, Widgets, Look). Shows the current value of each preference
+-- Loopscape settings panel: three tabs (Wallpaper, Widgets, Look). Shows the current value of each preference
 -- and changes it on click. Preferences live in @Resources\Settings.inc (included by both widgets); changing one
 -- rewrites that file and applies it to the running widgets.
 
-local WIDGETS = { 'LaptopInfo\\Clock', 'LaptopInfo\\WiFi' }
+-- The widgets: config name (= folder = ini name), its Show<name> setting, and whether it's shown when Settings.inc
+-- doesn't say (an older Settings.inc; the installer shows the first three then). In MeterWTile1..N order.
+local WIDGET_TILES = {
+  { 'Clock', '1' }, { 'WiFi', '1' }, { 'NowShowing', '1' }, { 'SunMoon', '0' }, { 'Rain', '0' }, { 'System', '0' },
+  { 'Calendar', '0' },
+}
+local WIDGETS = {}
+for i, w in ipairs(WIDGET_TILES) do WIDGETS[i] = 'Loopscape\\' .. w[1] end
 local INC
 
--- Each row: variable, meter that shows the value, list of { value, label }
+-- Each row: variable, meter that shows the value, list of { value, label }, value when Settings.inc doesn't have it
 local ROWS = {
   { 'MatchWidths',   'MeterVal1', { { '1', 'On' }, { '0', 'Off' } } },
   { 'SnapEnabled',   'MeterVal2', { { '1', 'On' }, { '0', 'Off' } } },
@@ -14,8 +21,6 @@ local ROWS = {
   { 'WeatherUnit',   'MeterVal3', { { 'fahrenheit', '[\\x00B0]F' }, { 'celsius', '[\\x00B0]C' } } },
   { 'WeatherLocation', 'MeterVal21', { { 'city', 'City' }, { 'windows', 'Windows location' } } },
   { 'PanelAlpha',    'MeterVal4', { { '0', 'Off' }, { '110', 'Light' }, { '150', 'Medium' }, { '200', 'Dark' } } },
-  { 'ShowClock',     'MeterVal20', { { '1', 'Shown' }, { '0', 'Hidden' } } },
-  { 'ShowWiFi',      'MeterVal5', { { '1', 'Shown' }, { '0', 'Hidden' } } },
   { 'TextEffect',    'MeterVal8', { { 'Shadow', 'Shadow' }, { 'Border', 'Outline' }, { 'None', 'None' } } },
   { 'TextPills',     'MeterVal10', { { '1', 'On' }, { '0', 'Off' } } },
   -- read by snap.lua in each widget (see BOOST there)
@@ -63,7 +68,7 @@ end
 
 local function show()
   for _, r in ipairs(ROWS) do
-    SKIN:Bang('!SetOption', r[2], 'Text', label(r, SKIN:GetVariable(r[1], '')))
+    SKIN:Bang('!SetOption', r[2], 'Text', label(r, SKIN:GetVariable(r[1], r[4] or '')))
   end
   local city = SKIN:GetVariable('WeatherCity', '')
   SKIN:Bang('!SetOption', 'MeterVal22', 'Text', city ~= '' and city or 'Type a city')
@@ -74,6 +79,12 @@ local function show()
     -- styles left out of the rotation: dimmed and struck through
     SKIN:Bang('!SetVariable', 'TileFont' .. i, ex[id] and '255,255,255,85' or '255,255,255,255')
     SKIN:Bang('!SetOption', 'MeterTile' .. i, 'InlineSetting', ex[id] and 'Strikethrough' or '')
+  end
+  -- widget tiles: lit while the widget is on screen
+  for i, w in ipairs(WIDGET_TILES) do
+    local on = SKIN:GetVariable('Show' .. w[1], w[2]) ~= '0'
+    SKIN:Bang('!SetVariable', 'WTileBase' .. i, SKIN:GetVariable(on and 'ColorSel' or 'ColorPill'))
+    SKIN:Bang('!SetVariable', 'WTileFont' .. i, SKIN:GetVariable(on and 'ColorMain' or 'ColorSub'))
   end
   SKIN:Bang('!UpdateMeter', '*')
   SKIN:Bang('!Redraw')
@@ -187,15 +198,16 @@ end
 -- Apply a changed setting to the running widgets without refreshing them (a refresh reloads everything:
 -- the weather re-fetches, the Wi-Fi details reset and the widgets flicker). Settings.inc is still updated,
 -- so the value also holds after the next refresh/restart.
-local CLOCK = 'LaptopInfo\\Clock'
+local CLOCK = 'Loopscape\\Clock'
 local function apply(var, value)
-  if var == 'ShowWiFi' then
-    if value == '1' then SKIN:Bang('!ActivateConfig', 'LaptopInfo\\WiFi', 'WiFi.ini')
-    else SKIN:Bang('!DeactivateConfig', 'LaptopInfo\\WiFi') end
-    return
-  elseif var == 'ShowClock' then
-    if value == '1' then SKIN:Bang('!ActivateConfig', CLOCK, 'Clock.ini')
-    else SKIN:Bang('!DeactivateConfig', CLOCK) end
+  local shown = var:match('^Show(%w+)$')
+  if shown then
+    for _, w in ipairs(WIDGET_TILES) do
+      if w[1] == shown then
+        if value == '1' then SKIN:Bang('!ActivateConfig', 'Loopscape\\' .. shown, shown .. '.ini')
+        else SKIN:Bang('!DeactivateConfig', 'Loopscape\\' .. shown) end
+      end
+    end
     return
   elseif var == 'TextColorMode' or var:match('^Wall') then
     -- read from Settings.inc by Loopscape, which watches the file and crossfades to a new style by itself
@@ -219,6 +231,16 @@ local function apply(var, value)
     -- through DynamicVariables
     SKIN:Bang('!UpdateMeasure', 'MeasureWeatherRun', CLOCK)
     SKIN:Bang('!CommandMeasure', 'MeasureWeatherRun', 'Run', CLOCK)
+    -- the other widgets that read WeatherFetch: Sun & Moon (sun times), Rain
+    SKIN:Bang('!UpdateMeasure', 'MeasureSunRun', 'Loopscape\\SunMoon')
+    SKIN:Bang('!CommandMeasure', 'MeasureSunRun', 'Run', 'Loopscape\\SunMoon')
+    SKIN:Bang('!UpdateMeasure', 'MeasureRainRun', 'Loopscape\\Rain')
+    SKIN:Bang('!CommandMeasure', 'MeasureRainRun', 'Run', 'Loopscape\\Rain')
+  end
+  if var == 'ClockFormat' then
+    -- times shown by the scripts (not by a Time measure)
+    SKIN:Bang('!UpdateMeasure', 'MeasureSunMoon', 'Loopscape\\SunMoon')
+    SKIN:Bang('!UpdateMeasure', 'MeasureRain', 'Loopscape\\Rain')
   end
 end
 local function setValue(var, value)
@@ -231,6 +253,13 @@ end
 function PickTile(i)
   local id = TILES[i]
   if id and id ~= SKIN:GetVariable('WallpaperMode', '') then setValue('WallpaperMode', id) end
+end
+
+-- Widgets tab: show / hide a widget
+function ToggleWidget(i)
+  local w = WIDGET_TILES[tonumber(i) or 0]
+  if not w then return end
+  setValue('Show' .. w[1], SKIN:GetVariable('Show' .. w[1], w[2]) ~= '0' and '0' or '1')
 end
 
 -- Right-click a style: leave it out of the rotation (or put it back)
@@ -317,7 +346,7 @@ function Next(var)
     if ddVar == var then CloseDropdown() else openDropdown(r) end
     return
   end
-  local cur = SKIN:GetVariable(var, '')
+  local cur = SKIN:GetVariable(var, r[4] or '')
   local nextValue = opts[1][1]
   for i, opt in ipairs(opts) do
     if opt[1] == cur then nextValue = opts[(i % #opts) + 1][1] end

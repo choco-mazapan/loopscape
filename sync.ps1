@@ -1,8 +1,8 @@
 # Pushes this project to the running setup in one go:
 #   - regenerates the settings panel (rainmeter\gen-settings-ini.ps1) and rebuilds WeatherFetch.exe / WifiInfo.exe if
 #     their source changed
-#   - copies the Rainmeter skin to Documents\Rainmeter\Skins\LaptopInfo, keeping what lives only there:
-#       Settings.inc values (new keys are added), widget layout (SnapAttach, View), the panel's last tab (Tab),
+#   - copies the Rainmeter skin to Documents\Rainmeter\Skins\Loopscape, keeping what lives only there:
+#       Settings.inc values (new keys are added), widget layout (SnapAttach, SnapSize, View), the panel's last tab (Tab),
 #       and the bundled fonts (Rainmeter locks them; copied only if missing)
 #   - rebuilds and restarts Loopscape if Loopscape.cs changed (or with -RebuildLoopscape); new Loopscape.ini keys are added
 #   - refreshes the widgets
@@ -10,11 +10,11 @@
 param([switch]$DryRun, [switch]$RebuildLoopscape)
 $ErrorActionPreference = 'Stop'
 $root    = $PSScriptRoot
-$skinSrc = Join-Path $root 'rainmeter\LaptopInfo'
-$skinDst = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Rainmeter\Skins\LaptopInfo'
+$skinSrc = Join-Path $root 'rainmeter\Loopscape'
+$skinDst = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Rainmeter\Skins\Loopscape'
 $lwDir   = Join-Path $env:USERPROFILE 'Loopscape'
 $rm      = "$env:ProgramFiles\Rainmeter\Rainmeter.exe"
-$runtimeKeys = 'SnapAttach', 'View', 'Tab'     # written by the skins at runtime: the live value wins
+$runtimeKeys = 'SnapAttach', 'SnapSize', 'View', 'Tab'     # written by the skins at runtime: the live value wins
 $changed = New-Object System.Collections.Generic.List[string]
 function Say($m) { if ($DryRun) { "[dry run] $m" } else { $m } }
 
@@ -67,6 +67,8 @@ if ($staleWf -or $staleWi -or $staleLw) {
 }
 
 # ---- 2. skin files ----
+# a new widget folder: Rainmeter only knows the configs it found at start, so it has to rescan (step 4)
+$newConfigs = @(Get-ChildItem $skinSrc -Directory | Where-Object { $_.Name -ne '@Resources' -and -not (Test-Path (Join-Path $skinDst $_.Name)) })
 foreach ($f in Get-ChildItem $skinSrc -Recurse -File) {
   $rel = $f.FullName.Substring($skinSrc.Length + 1)
   $dst = Join-Path $skinDst $rel
@@ -113,7 +115,8 @@ if (-not $DryRun -and -not (Get-Process Loopscape -ErrorAction SilentlyContinue)
 if (-not $DryRun -and $changed.Count -gt 0 -and (Test-Path $rm)) {
   $rmIni = Join-Path $env:APPDATA 'Rainmeter\Rainmeter.ini'
   $rmText = if (Test-Path $rmIni) { [IO.File]::ReadAllText($rmIni) } else { '' }
-  foreach ($cfg in 'LaptopInfo\Clock', 'LaptopInfo\WiFi', 'LaptopInfo\Settings') {
+  if ($newConfigs.Count -gt 0) { & $rm !RefreshApp; Start-Sleep -Seconds 2 }
+  foreach ($cfg in (Get-ChildItem $skinSrc -Directory | Where-Object Name -ne '@Resources' | ForEach-Object { "Loopscape\$($_.Name)" })) {
     # only configs that are open (refreshing a closed one is an error in Rainmeter's log)
     if ($rmText -match "(?ms)^\[$([regex]::Escape($cfg))\]\s*\r?\nActive=([1-9])") { & $rm !Refresh $cfg }
   }

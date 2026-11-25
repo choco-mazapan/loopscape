@@ -5,7 +5,7 @@
 #   Weather\light\..., Weather\deep\... (+ small\)   colour-coded: light for dark backgrounds, deep for light ones
 # Warm colours for sun (by temperature: clear-day-hot / clear-day / clear-day-cool), cold ones for cloud, rain, snow.
 param(
-  [string]$OutDir = "$PSScriptRoot\LaptopInfo\@Resources\Weather",
+  [string]$OutDir = "$PSScriptRoot\Loopscape\@Resources\Weather",
   [string]$Preview          # optional: path for a labelled preview sheet
 )
 Add-Type -AssemblyName System.Drawing
