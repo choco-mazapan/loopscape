@@ -962,6 +962,8 @@ static class Loopscape
     static string Pretty(string name)
     {
         string n; if (Names.TryGetValue(name, out n)) return n;
+        // Your own styles (e.g. misty-meadow from the loopscape-style skill): "Misty meadow"
+        name = name.Replace('-', ' ').Replace('_', ' ');
         return name.Length == 0 ? name : char.ToUpperInvariant(name[0]) + name.Substring(1);
     }
     static System.Windows.Forms.NotifyIcon tray;
