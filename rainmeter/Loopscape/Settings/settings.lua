@@ -299,6 +299,12 @@ function NextWallpaper()
   if f then f:write(os.time(), ' ', os.clock(), '\n'); f:close() end
 end
 
+-- Update Loopscape: Loopscape picks up "update" in @Resources\wallcmd.txt and runs the update (or opens the Releases page)
+function UpdateLoopscape()
+  local f = io.open(SKIN:GetVariable('@') .. 'wallcmd.txt', 'a')
+  if f then f:write('update\n'); f:close() end
+end
+
 local function openDropdown(r)
   local var, opts = r[1], r[3]
   local value = SKIN:GetMeter(r[2])

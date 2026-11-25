@@ -5,7 +5,7 @@
 // - Pauses while a window covers the whole screen (maximized / fullscreen)
 // - alwaysAnimate=true (tray: "Always animate") keeps the video playing on battery and behind covering windows
 // - Re-attaches if Explorer restarts
-// - Tray icon: opens the widget Settings panel, skips or picks a wallpaper, quits
+// - Tray icon: opens the widget Settings panel, skips or picks a wallpaper, updates Loopscape, quits
 // Build: build\build.ps1 (uses the C# compiler that ships with Windows). C# 5 syntax only.
 using System;
 using System.Diagnostics;
@@ -607,6 +607,7 @@ static class Loopscape
             string c = raw.Trim().ToLowerInvariant();
             if (c == "next" || c == "prev") { Step(c == "next" ? 1 : -1); changed = true; }
             else if (c == "pause" || c == "play") { userPaused = c == "pause"; Log("widget: " + c); }
+            else if (c == "update") StartUpdate("widget");
             else if (c.StartsWith("pick "))
             {
                 string name = c.Substring(5).Trim();
@@ -1123,6 +1124,13 @@ static class Loopscape
         autostart.Checked = StartsWithWindows();
         autostart.Click += delegate { SetStartWithWindows(!StartsWithWindows()); };
         menu.Items.Add(autostart);
+        bool updating = UpdateRunning();
+        var update = new System.Windows.Forms.ToolStripMenuItem(updating ? "Updating Loopscape..." : "Update Loopscape");
+        update.Enabled = !updating;
+        update.ToolTipText = UpdateScript() != null ? "Get the latest version from GitHub, rebuild it and refresh the widgets"
+                                                    : "Open the Releases page to download the newest installer";
+        update.Click += delegate { ThreadPool.QueueUserWorkItem(delegate { StartUpdate("tray"); }); };
+        menu.Items.Add(update);
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
         var quit = new System.Windows.Forms.ToolStripMenuItem("Quit Loopscape");
         quit.Click += delegate { Quit("tray icon"); };
@@ -1195,6 +1203,59 @@ static class Loopscape
         try { Process.Start(rm, "!ActivateConfig \"Loopscape\\Settings\" \"Settings.ini\""); }
         catch (Exception e) { Log("tray: could not open settings: " + e.Message); }
     }
+    // ---------------- Update ----------------
+    // "Update Loopscape" (tray menu, Settings panel > Look, or "update" in wallcmd.txt). Runs only when asked: nothing
+    // checks for updates in the background.
+    // With a git clone of the source (sourceFolder= in Loopscape.ini, which sync.ps1 fills in) it starts the clone's
+    // update.ps1, which pulls the latest code from GitHub and runs sync.ps1. sync.ps1 may restart this program midway,
+    // so update.ps1 shows the result itself. Without a clone it opens the Releases page to get the newest installer.
+    const string ReleasesUrl = "https://github.com/choco-mazapan/loopscape/releases";
+    const string UpdateMutexName = "Local\\LoopscapeUpdate";   // held by update.ps1 while it runs
+    static string UpdateScript()
+    {
+        try
+        {
+            var ini = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            ReadIni(Path.Combine(Dir, "Loopscape.ini"), ini);
+            string v;
+            if (!ini.TryGetValue("sourceFolder", out v) || v.Length == 0) return null;
+            string script = Path.Combine(Environment.ExpandEnvironmentVariables(v), "update.ps1");
+            return File.Exists(script) ? script : null;
+        }
+        catch { return null; }
+    }
+    static bool UpdateRunning()
+    {
+        Mutex m;
+        if (!Mutex.TryOpenExisting(UpdateMutexName, out m)) return false;
+        m.Dispose();
+        return true;
+    }
+    static void StartUpdate(string from)
+    {
+        try
+        {
+            if (UpdateRunning()) { Log(from + ": update already running"); return; }
+            string script = UpdateScript();
+            if (script == null)
+            {
+                Log(from + ": update: no sourceFolder, opening the Releases page");
+                Process.Start(ReleasesUrl);
+                return;
+            }
+            Log(from + ": update (" + script + ")");
+            var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"");
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;   // update.ps1 reports through message boxes
+            psi.WorkingDirectory = Path.GetDirectoryName(script);
+            using (Process.Start(psi)) { }
+            if (tray != null)
+                tray.ShowBalloonTip(5000, "Updating Loopscape", "Getting the latest version. A message shows when it's done.",
+                                    System.Windows.Forms.ToolTipIcon.None);
+        }
+        catch (Exception e) { Log(from + ": update: " + e.Message); }
+    }
+
     // Is the Settings panel open? (Rainmeter.ini: [Loopscape\Settings] Active=1)
     static bool SettingsPanelOpen()
     {
