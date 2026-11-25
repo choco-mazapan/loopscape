@@ -863,6 +863,30 @@ local function applyColours(set)
     set = s; W = set.W or DEFAULT
   end
   local function alphaOf(role) return B.solid and 255 or ALPHA[role] end
+  -- Weather icons get the same readability help as the text: the Clock's Halo_<icon>_1..8 meters draw a 1 px
+  -- outline (for the Border effect, or a halo boost) and Halo_<icon>_9 a drop shadow, all in the shadow colour.
+  local function iconHalo(m, e)
+    local effect = B.effect or SKIN:GetVariable('TextEffect', 'Shadow')
+    local strength = B.halo and 255 or (e.shadow[4] or 170)
+    local outline, drop = 0, nil
+    if effect == 'Border' then outline = strength end
+    if B.halo then
+      local h = B.halo
+      -- a halo centred on the text (no offset) becomes a softer outline; an offset one becomes the drop shadow
+      if h[1] == 0 and h[2] == 0 then outline = math.max(outline, math.floor(h[4] * 0.6)) else drop = { h[1], h[2], h[4] } end
+    end
+    if not drop and effect == 'Shadow' then drop = { 1, 1, strength } end
+    local rgb = string.format('%.3f;%.3f;%.3f;0;1', e.shadow[1] / 255, e.shadow[2] / 255, e.shadow[3] / 255)
+    for i = 1, 9 do
+      local h = 'Halo_' .. m .. '_' .. i
+      if SKIN:GetMeter(h) then
+        local a = (i <= 8) and outline or (drop and drop[3] or 0)
+        SKIN:Bang('!SetOption', h, 'ColorMatrix4', string.format('0;0;0;%.3f;0', a / 255))
+        SKIN:Bang('!SetOption', h, 'ColorMatrix5', rgb)
+      end
+    end
+    if drop then SKIN:Bang('!SetVariable', 'WxDropX', drop[1]); SKIN:Bang('!SetVariable', 'WxDropY', drop[2]) end
+  end
   local function textEffects(m, e, role)
     SKIN:Bang('!SetOption', m, 'StringEffect', B.effect or SKIN:GetVariable('TextEffect', 'Shadow'))
     local inl = {}
@@ -895,6 +919,7 @@ local function applyColours(set)
       SKIN:Bang('!SetOption', m, 'ImageTint', '255,255,255,255')
       local lum = e.text[1] * 0.299 + e.text[2] * 0.587 + e.text[3] * 0.114
       SKIN:Bang('!SetVariable', 'WxShade_' .. m, lum >= 128 and 'light' or 'deep')
+      iconHalo(m, e)
     elseif role == 'icon' then
       SKIN:Bang('!SetOption', m, 'ImageTint', col(e.text, 255))
     elseif role == 'battery' then   -- battery.lua owns that meter's colour (low-battery warning)
