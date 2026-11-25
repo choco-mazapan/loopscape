@@ -3,6 +3,7 @@
 // - On battery: switches straight to a still wallpaper and closes mpv entirely (zero cost)
 // - Plugged in: starts mpv showing that same wallpaper and crossfades into the video
 // - Pauses while a window covers the whole screen (maximized / fullscreen)
+// - alwaysAnimate=true (tray: "Always animate") keeps the video playing on battery and behind covering windows
 // - Re-attaches if Explorer restarts
 // - Tray icon: opens the widget Settings panel, skips or picks a wallpaper, quits
 // Build: build\build.ps1 (uses the C# compiler that ships with Windows). C# 5 syntax only.
@@ -54,7 +55,8 @@ static class Loopscape
     static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Loopscape");
     static Dictionary<string, string> Cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     static string Get(string k, string d) { string v; return Cfg.TryGetValue(k, out v) && v.Length > 0 ? v : d; }
-    static bool GetBool(string k, bool d) { string v = Get(k, d ? "true" : "false").ToLowerInvariant(); return v == "true" || v == "1" || v == "yes"; }
+    static bool GetBool(string k, bool d) { return IsTrue(Get(k, d ? "true" : "false")); }
+    static bool IsTrue(string v) { v = v.Trim().ToLowerInvariant(); return v == "true" || v == "1" || v == "yes"; }
     static int GetInt(string k, int d) { int v; return int.TryParse(Get(k, ""), out v) ? v : d; }
 
     // The widgets' @Resources folder: Settings.inc (panel preferences), wallstyle.txt / wallstatus.txt (what we play),
@@ -1034,7 +1036,9 @@ static class Loopscape
     static void BuildTrayMenu(System.Windows.Forms.ContextMenuStrip menu)
     {
         menu.Items.Clear();
-        menu.ImageScalingSize = new System.Drawing.Size(40, 24);
+        // Only the style list has thumbnails: the main menu keeps the normal (narrow) check column
+        menu.ShowItemToolTips = true;
+        menu.Renderer = LoopscapeTray.TrayMenuRenderer.ForCurrentTheme();
         // what is chosen now: Loopscape.ini read fresh (Cfg belongs to the main loop)
         var ini = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try { ReadIni(Path.Combine(Dir, "Loopscape.ini"), ini); } catch { }
@@ -1059,6 +1063,18 @@ static class Loopscape
         pause.Checked = userPaused;
         pause.Click += delegate { userPaused = !userPaused; wake = true; Log("tray: " + (userPaused ? "pause" : "play")); };
         menu.Items.Add(pause);
+        // Saved as alwaysAnimate= in Loopscape.ini; the main loop picks it up through its settings reload
+        bool always = ini.TryGetValue("alwaysAnimate", out v) && IsTrue(v);
+        var force = new System.Windows.Forms.ToolStripMenuItem("Always animate");
+        force.Checked = always;
+        force.ToolTipText = "Keep the wallpaper moving on battery and behind full-screen windows (uses more battery)";
+        force.Click += delegate
+        {
+            if (!always) userPaused = false;   // turning it on also resumes a paused wallpaper
+            SetLine(Path.Combine(Dir, "Loopscape.ini"), "alwaysAnimate", always ? "false" : "true", true);
+            Log("tray: always animate " + (always ? "off" : "on"));
+        };
+        menu.Items.Add(force);
 
         var change = new System.Windows.Forms.ToolStripMenuItem("Change wallpaper");
         change.DropDown.ImageScalingSize = new System.Drawing.Size(40, 24);
@@ -1109,6 +1125,12 @@ static class Loopscape
         var quit = new System.Windows.Forms.ToolStripMenuItem("Quit Loopscape");
         quit.Click += delegate { Quit("tray icon"); };
         menu.Items.Add(quit);
+        // Submenus don't inherit the menu's renderer
+        foreach (System.Windows.Forms.ToolStripItem item in menu.Items)
+        {
+            var mi = item as System.Windows.Forms.ToolStripMenuItem;
+            if (mi != null && mi.HasDropDownItems) mi.DropDown.Renderer = menu.Renderer;
+        }
     }
     // Video format for downloaded styles (videoFormat= in Loopscape.ini). Automatic picks the smallest format the graphics
     // chip plays by itself; AV1 without hardware support saves disk space and download time but keeps the CPU busier.
@@ -1292,6 +1314,8 @@ static class Loopscape
             // onBattery: static = fade to your Windows wallpaper and close mpv; pause = freeze video; play = keep animating
             string onBattery = Get("onBattery", "static").ToLowerInvariant();
             bool pauseWhenCovered = GetBool("pauseWhenCovered", true);
+            // alwaysAnimate: ignore the battery and covering-window rules (the tray's Pause still works)
+            bool alwaysAnimate = GetBool("alwaysAnimate", false);
             int fadeMs = Math.Max(0, GetInt("fadeMs", 1500));
             int interval = Math.Max(250, GetInt("pollMs", 1500));
 
@@ -1322,6 +1346,7 @@ static class Loopscape
                         LoadConfig();
                         onBattery = Get("onBattery", "static").ToLowerInvariant();
                         pauseWhenCovered = GetBool("pauseWhenCovered", true);
+                        alwaysAnimate = GetBool("alwaysAnimate", false);
                         fadeMs = Math.Max(0, GetInt("fadeMs", 1500));
                         Log("settings reloaded");
                         StyleDownloads.CheckFormats();
@@ -1345,10 +1370,12 @@ static class Loopscape
                     }
 
                     bool battery = OnBattery();
+                    // Always animate: behave as if onBattery=play and pauseWhenCovered=false (skips the window check too)
+                    string batteryMode = alwaysAnimate ? "play" : onBattery;
                     // paused by the user: the video is frozen like under a covering window (style changes swap instantly)
-                    bool windowCovers = pauseWhenCovered && DesktopCovered();
+                    bool windowCovers = !alwaysAnimate && pauseWhenCovered && DesktopCovered();
                     bool covered = windowCovers || userPaused;
-                    bool wantVideo = !battery || onBattery != "static";
+                    bool wantVideo = !battery || batteryMode != "static";
 
                     if (wantVideo)
                     {
@@ -1379,7 +1406,7 @@ static class Loopscape
                             {
                                 bool manual = DateTime.Now < manualUntil;
                                 // A frozen frame (on battery / covered) picked by hand: swap it instantly, no crossfade
-                                bool frozen = covered || (battery && onBattery == "pause");
+                                bool frozen = covered || (battery && batteryMode == "pause");
                                 SwitchTo(want, fadeMs > 0 && !covered && !(manual && frozen), manual);
                                 manualUntil = DateTime.MinValue;
                             }
@@ -1387,7 +1414,7 @@ static class Loopscape
                                 RemoveStrayFilter();
                         }
 
-                        SetPaused(covered || (battery && onBattery == "pause"));
+                        SetPaused(covered || (battery && batteryMode == "pause"));
                     }
                     else if (MpvRunning)
                     {
@@ -1396,7 +1423,7 @@ static class Loopscape
                         hadMpv = false; failures = 0;
                     }
                     else UpdateBatteryStill();   // hourly still rotation while on battery
-                    PublishStatus(battery, onBattery, windowCovers);
+                    PublishStatus(battery, batteryMode, windowCovers);
                 }
                 catch (Exception e) { Log("error: " + e.Message); }
 
@@ -2260,5 +2287,139 @@ static class WidgetThemes
             using (Process.Start(psi)) { }
         }
         catch (Exception e) { Loopscape.LogLine("theme push failed: " + e.Message); }
+    }
+}
+
+namespace LoopscapeTray
+{
+    using System;
+    using System.Drawing;
+    using System.Drawing.Drawing2D;
+
+    // Draws the tray menu like a Windows 11 menu, in the light or dark app theme. The default WinForms renderer drew each
+    // check mark in its own blue box that didn't line up with the row highlight, and a grey image column.
+    class TrayMenuRenderer : System.Windows.Forms.ToolStripProfessionalRenderer
+    {
+        readonly Color back, hover, text, dim, line, border, accent;
+
+        TrayMenuRenderer(bool dark) : base(new System.Windows.Forms.ProfessionalColorTable())
+        {
+            RoundedEdges = false;
+            back   = dark ? Color.FromArgb(44, 44, 44)    : Color.FromArgb(249, 249, 249);
+            hover  = dark ? Color.FromArgb(61, 61, 61)    : Color.FromArgb(232, 232, 232);
+            text   = dark ? Color.White                   : Color.Black;
+            dim    = dark ? Color.FromArgb(138, 138, 138) : Color.FromArgb(110, 110, 110);
+            line   = dark ? Color.FromArgb(69, 69, 69)    : Color.FromArgb(224, 224, 224);
+            border = dark ? Color.FromArgb(70, 70, 70)    : Color.FromArgb(204, 204, 204);
+            accent = dark ? Color.FromArgb(96, 205, 255)  : Color.FromArgb(0, 103, 192);
+        }
+
+        // Follows Settings > Personalization > Colors > "Choose your app mode"
+        public static TrayMenuRenderer ForCurrentTheme()
+        {
+            bool dark = false;
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
+                {
+                    object v = k == null ? null : k.GetValue("AppsUseLightTheme");
+                    dark = v is int && (int)v == 0;
+                }
+            }
+            catch { }
+            return new TrayMenuRenderer(dark);
+        }
+
+        static GraphicsPath Rounded(RectangleF r, float radius)
+        {
+            var p = new GraphicsPath();
+            float d = radius * 2;
+            p.AddArc(r.X, r.Y, d, d, 180, 90);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            p.CloseFigure();
+            return p;
+        }
+
+        protected override void OnRenderToolStripBackground(System.Windows.Forms.ToolStripRenderEventArgs e)
+        {
+            using (var b = new SolidBrush(back)) e.Graphics.FillRectangle(b, e.AffectedBounds);
+        }
+
+        protected override void OnRenderToolStripBorder(System.Windows.Forms.ToolStripRenderEventArgs e)
+        {
+            var r = new Rectangle(Point.Empty, e.ToolStrip.Size);
+            r.Width--; r.Height--;
+            using (var pen = new Pen(border)) e.Graphics.DrawRectangle(pen, r);
+        }
+
+        // No separate grey column for the check marks and thumbnails
+        protected override void OnRenderImageMargin(System.Windows.Forms.ToolStripRenderEventArgs e) { }
+
+        // One rounded highlight across the whole row, check column included
+        protected override void OnRenderMenuItemBackground(System.Windows.Forms.ToolStripItemRenderEventArgs e)
+        {
+            var item = e.Item;
+            if (!item.Enabled || !(item.Selected || item.Pressed)) return;   // Pressed: its submenu is open
+            float s = e.Graphics.DpiX / 96f;
+            var r = new RectangleF(4 * s, 1, item.Width - 8 * s, item.Height - 2);
+            var old = e.Graphics.SmoothingMode;
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var b = new SolidBrush(hover))
+            using (var path = Rounded(r, 4 * s))
+                e.Graphics.FillPath(b, path);
+            e.Graphics.SmoothingMode = old;
+        }
+
+        protected override void OnRenderItemCheck(System.Windows.Forms.ToolStripItemImageRenderEventArgs e)
+        {
+            var g = e.Graphics;
+            float s = g.DpiX / 96f;
+            var old = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            if (e.Item.Image != null)
+            {
+                // A style thumbnail: mark the chosen one with an accent outline around its picture. The picture is drawn
+                // here too, in case WinForms skips its usual image pass for a checked item.
+                g.DrawImage(e.Item.Image, e.ImageRectangle);
+                RectangleF r = e.ImageRectangle;
+                r.Inflate(2 * s, 2 * s);
+                using (var pen = new Pen(accent, 2 * s))
+                using (var path = Rounded(r, 3 * s))
+                    g.DrawPath(pen, path);
+            }
+            else
+            {
+                // A plain check mark, centred in the check column
+                float cx = e.ImageRectangle.X + e.ImageRectangle.Width / 2f, cy = e.ImageRectangle.Y + e.ImageRectangle.Height / 2f;
+                using (var pen = new Pen(e.Item.Enabled ? text : dim, 1.5f * s))
+                {
+                    pen.StartCap = pen.EndCap = LineCap.Round;
+                    pen.LineJoin = LineJoin.Round;
+                    g.DrawLines(pen, new[] { new PointF(cx - 4.5f * s, cy + 0.5f * s), new PointF(cx - 1.5f * s, cy + 3.5f * s), new PointF(cx + 4.5f * s, cy - 3.5f * s) });
+                }
+            }
+            g.SmoothingMode = old;
+        }
+
+        protected override void OnRenderItemText(System.Windows.Forms.ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = e.Item.Enabled ? text : dim;
+            base.OnRenderItemText(e);
+        }
+
+        protected override void OnRenderArrow(System.Windows.Forms.ToolStripArrowRenderEventArgs e)
+        {
+            e.ArrowColor = e.Item == null || e.Item.Enabled ? text : dim;
+            base.OnRenderArrow(e);
+        }
+
+        protected override void OnRenderSeparator(System.Windows.Forms.ToolStripSeparatorRenderEventArgs e)
+        {
+            float s = e.Graphics.DpiX / 96f;
+            int y = e.Item.Height / 2;
+            using (var pen = new Pen(line)) e.Graphics.DrawLine(pen, (int)(4 * s), y, e.Item.Width - (int)(4 * s), y);
+        }
     }
 }
