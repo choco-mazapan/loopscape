@@ -1304,8 +1304,8 @@ static class Loopscape
     // "Update Loopscape" (tray menu, Settings panel > Look, or "update" in wallcmd.txt). Runs only when asked: nothing
     // checks for updates in the background.
     // With a git clone of the source (sourceFolder= in Loopscape.ini, which sync.ps1 fills in) it starts the clone's
-    // update.ps1, which pulls the latest code from GitHub and runs sync.ps1. sync.ps1 may restart this program midway,
-    // so update.ps1 shows the result itself. Without a clone it opens the Releases page to get the newest installer.
+    // update.ps1, which lists the new changes, and after you confirm pulls them and runs sync.ps1 with a progress bar.
+    // sync.ps1 may restart this program midway, so update.ps1 runs in its own process. Without a clone it opens the Releases page to get the newest installer.
     const string ReleasesUrl = "https://github.com/choco-mazapan/loopscape/releases";
     const string UpdateMutexName = "Local\\LoopscapeUpdate";   // held by update.ps1 while it runs
     static string UpdateScript()
@@ -1343,12 +1343,9 @@ static class Loopscape
             Log(from + ": update (" + script + ")");
             var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"");
             psi.UseShellExecute = false;
-            psi.CreateNoWindow = true;   // update.ps1 reports through message boxes
+            psi.CreateNoWindow = true;   // no console: update.ps1 shows its own window
             psi.WorkingDirectory = Path.GetDirectoryName(script);
-            using (Process.Start(psi)) { }
-            if (tray != null)
-                tray.ShowBalloonTip(5000, "Updating Loopscape", "Getting the latest version. A message shows when it's done.",
-                                    System.Windows.Forms.ToolTipIcon.None);
+            using (Process.Start(psi)) { }   // it opens its own window right away
         }
         catch (Exception e) { Log(from + ": update: " + e.Message); }
     }
