@@ -49,6 +49,11 @@ end
 local function iconPath(meter, sub, icon)
   return iconDir .. '#*WxShade_' .. meter .. '*#\\' .. sub .. icon .. '.png'
 end
+-- Sets a weather icon's image, and the same image on its outline / shadow copies (Halo_<meter>_1..9 in Clock.ini)
+local function setIcon(meter, path)
+  SKIN:Bang('!SetOption', meter, 'ImageName', path)
+  for i = 1, 9 do SKIN:Bang('!SetOption', 'Halo_' .. meter .. '_' .. i, 'ImageName', path) end
+end
 
 function Update()
   local out = mRun:GetStringValue() or ''
@@ -80,7 +85,7 @@ function Update()
 
   SKIN:Bang('!SetOption', 'MeasureWeatherTemp', 'String', tostring(temp))
   SKIN:Bang('!UpdateMeasure', 'MeasureWeatherTemp')
-  SKIN:Bang('!SetOption', 'MeterWeatherIcon', 'ImageName', iconPath('MeterWeatherIcon', '', sunVariant(icon, temp)))
+  setIcon('MeterWeatherIcon', iconPath('MeterWeatherIcon', '', sunVariant(icon, temp)))
   SKIN:Bang('!SetOption', 'MeterWeatherDesc', 'Text', desc)
   SKIN:Bang('!SetOption', 'MeterWeatherCity', 'Text', t.city or '')
   -- (no "updated" time in the tooltip: it would change the tooltip on every fetch)
@@ -94,7 +99,7 @@ function Update()
     local day, code, hi, lo = (t['fc' .. i] or ''):match('^([^|]+)|(%d+)|([^|]+)|([^|]+)$')
     if day then
       local ficon, fdesc = classify(tonumber(code), true)
-      SKIN:Bang('!SetOption', 'MeterFcIcon' .. i, 'ImageName', iconPath('MeterFcIcon' .. i, 'small\\', sunVariant(ficon, tonumber(hi))))
+      setIcon('MeterFcIcon' .. i, iconPath('MeterFcIcon' .. i, 'small\\', sunVariant(ficon, tonumber(hi))))
       SKIN:Bang('!SetOption', 'MeterFcDay' .. i, 'Text', day)
       SKIN:Bang('!SetOption', 'MeterFcTemp' .. i, 'Text', hi .. '[\\x00B0] ' .. lo .. '[\\x00B0]')
       for _, m in ipairs({ 'MeterFcIcon', 'MeterFcDay', 'MeterFcTemp' }) do
