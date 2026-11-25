@@ -54,6 +54,9 @@ function Update()
     set('MeterV4', auth ~= '' and auth or 'Open')
     set('MeterV5', rssi and (rssi .. ' dBm') or (pct .. '%'))
   end
+  -- the meters only update when asked (DefaultUpdateDivider=-1): two passes, because the panel and the pills come
+  -- before the text they wrap
+  SKIN:Bang('!UpdateMeter', '*')
   SKIN:Bang('!UpdateMeter', '*')
   SKIN:Bang('!Redraw')
   return ssid or ''

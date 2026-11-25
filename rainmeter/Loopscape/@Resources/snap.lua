@@ -74,6 +74,15 @@ local function num(name, default)
 end
 local function key(config) return (config:gsub('[^%w]', '_')) end
 
+-- The widgets' meters only update when asked (DefaultUpdateDivider=-1), so there is no later tick to catch up.
+-- A change that can move or resize text needs two passes: the panel and the text pills come before the text they
+-- wrap, so the first pass gives them the old widths. A change of colour alone needs one.
+local function redrawAll(onePass)
+  SKIN:Bang('!UpdateMeter', '*')
+  if not onePass then SKIN:Bang('!UpdateMeter', '*') end
+  SKIN:Bang('!Redraw')
+end
+
 local function screen()
   return num('SCREENAREAX', 0), num('SCREENAREAY', 0), num('SCREENAREAWIDTH', 1920), num('SCREENAREAHEIGHT', 1080)
 end
@@ -194,8 +203,7 @@ local function updateMatch()
   if want ~= curMatched then
     curMatched = want
     SKIN:Bang('!SetVariable', 'MatchedWidth', want)
-    SKIN:Bang('!UpdateMeter', '*')
-    SKIN:Bang('!Redraw')
+    redrawAll()
   end
 end
 
@@ -208,8 +216,7 @@ local function updateAlign(x, w)
   if a ~= curAlign then
     curAlign = a
     SKIN:Bang('!SetVariable', 'ColumnAlign', a)
-    SKIN:Bang('!UpdateMeter', '*')
-    SKIN:Bang('!Redraw')
+    redrawAll()
   end
 end
 
@@ -834,6 +841,7 @@ local BOOST = {
   [6] = { effect = 'Border', halo = { 2, 2, 1.5, 255 }, bold = 200, solid = true },      -- maximum
 }
 local baseWeight = {}
+local lastBoost = nil   -- text boost / effect last applied: a change alters font weights, so text widths
 local function boost() return BOOST[tonumber(SKIN:GetVariable('TextBoost', '0')) or 0] or BOOST[0] end
 local function solidOf(t) return ((t[1] * 0.299 + t[2] * 0.587 + t[3] * 0.114) >= 128) and { 255, 255, 255 } or { 0, 0, 0 } end
 
@@ -897,8 +905,10 @@ local function applyColours(set)
     SKIN:Bang('!SetVariable', 'PillFill_' .. m, col(e.pill))
   end
   if SKIN:GetMeasure('MeasureBatteryText') then SKIN:Bang('!UpdateMeasure', 'MeasureBatteryText') end
-  SKIN:Bang('!UpdateMeter', '*')
-  SKIN:Bang('!Redraw')
+  -- colour fades call this ten times a second; only a boost/effect change can resize text and needs two passes
+  local fx = SKIN:GetVariable('TextBoost', '0') .. '|' .. SKIN:GetVariable('TextEffect', '')
+  redrawAll(fx == lastBoost)
+  lastBoost = fx
 end
 
 local function readTheme()
@@ -1024,8 +1034,7 @@ end
 
 -- Meters hide themselves via Hidden=(#View#>=n); after changing View they just need re-evaluating
 function applyView()   -- global: Update (defined above) calls it
-  SKIN:Bang('!UpdateMeter', '*')
-  SKIN:Bang('!Redraw')
+  redrawAll()
 end
 
 function SetView(n)

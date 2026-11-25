@@ -214,10 +214,12 @@ local function apply(var, value)
     -- (downloading it first if it isn't on this PC yet)
     return
   end
-  -- Everything else is a variable the widgets use with DynamicVariables: set it and redraw
+  -- Everything else is a variable the widgets use with DynamicVariables: set it and redraw. The widgets' meters
+  -- only update when asked, so update them twice: their panel and pills come before the text they wrap.
   for _, w in ipairs(WIDGETS) do
     SKIN:Bang('!SetVariable', var, value, w)
     SKIN:Bang('!UpdateMeasure', 'MeasureNaturalWidth', w)   -- not '*': that would fire the weather/Wi-Fi timers
+    SKIN:Bang('!UpdateMeter', '*', w)
     SKIN:Bang('!UpdateMeter', '*', w)
     SKIN:Bang('!Redraw', w)
   end
