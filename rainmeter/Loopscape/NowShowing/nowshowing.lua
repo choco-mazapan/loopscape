@@ -110,7 +110,7 @@ function Cmd(c)
   f:write(c, '\n')
   f:close()
   -- read the status every 150 ms for a few seconds, so the change shows as soon as Loopscape has made it
-  SKIN:Bang('!CommandMeasure', 'MeasureFastTick', 'Execute 4')
+  SKIN:Bang('!CommandMeasure', 'MeasureFastTick', 'Execute 6')
 end
 
 function TogglePause()
