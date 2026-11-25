@@ -197,7 +197,7 @@ foreach ($m in @(@('MeterNowHead', 'PLAYING NOW', '(#Y0#+2)', 'StyleHint', 'Font
 }
 
 # ---- setting rows: tab, row index, value meter number, variable, label, hint ----
-# (variable '#skip' = a button that skips to the next wallpaper)
+# (variable '#skip' = a button that skips to the next wallpaper, '#update' = one that updates Loopscape)
 $rows = @(
   @('Wallpaper', 0, 11, 'AutoPlace',     'Move widgets with wallpaper', 'Each style picks its calmest spot'),
   @('Rotation',  0, 12, 'WallRotateMinutes', 'Change every',          'How long each style stays'),
@@ -218,20 +218,21 @@ $rows = @(
   @('Look',      1, 8,  'TextEffect',    'Text effect',                 'Used while Text boost is off'),
   @('Look',      2, 9,  'TextColorMode', 'Text colour',                 'Adapts to the wallpaper (tint off)'),
   @('Look',      3, 4,  'PanelAlpha',    'Panel darkness',              'Tint behind the text'),
-  @('Look',      4, 10, 'TextPills',     'Text pills',                  'Behind each line when tint is off')
+  @('Look',      4, 10, 'TextPills',     'Text pills',                  'Behind each line when tint is off'),
+  @('Look',      5, 23, '#update',       'Update Loopscape',            'Get the latest version from GitHub')
 )
 foreach ($r in $rows) {
   $tab, $k, $n, $var, $label, $hint = $r
   $hid = if ($tab -ne 'Wallpaper') { 'Hidden=1' } else { $null }
   $y = if ($tab -eq 'Wallpaper') { "(#Y0#+#PrevH#+16+$k*#RowHeight#)" } elseif ($tab -eq 'Widgets') { "(#Y0#+#WRowsY#+$k*#RowHeight#)" } else { "(#Y0#+$k*#RowHeight#)" }
-  $action = if ($var -eq '#skip') { 'NextWallpaper()' } elseif ($var -eq '#city') { 'EditCity()' } else { "Next('$var')" }
+  $action = if ($var -eq '#skip') { 'NextWallpaper()' } elseif ($var -eq '#update') { 'UpdateLoopscape()' } elseif ($var -eq '#city') { 'EditCity()' } else { "Next('$var')" }
   A "; --- $tab : $var ---"
   A "[MeterLabel$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleLabel'; A "Group=Tab$tab"; if ($hid) { A $hid }
   A "Text=$label"; A "Y=$y"; A ''
   A "[MeterHint$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A "Group=Tab$tab"; if ($hid) { A $hid }
   A "Text=$hint"; A "Y=($y+19)"; A ''
   A "[MeterVal$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleValue'; A "Group=Tab$tab"; if ($hid) { A $hid }
-  A $(if ($var -eq '#skip') { 'Text=Skip  [\x203A]' } else { 'Text=...' }); A "Y=($y+4)"
+  A $(if ($var -eq '#skip') { 'Text=Skip  [\x203A]' } elseif ($var -eq '#update') { 'Text=Update  [\x203A]' } else { 'Text=...' }); A "Y=($y+4)"
   A "MouseOverAction=[!SetOption MeterVal$n SolidColor #ColorPillHover#][!UpdateMeter MeterVal$n][!Redraw]"
   A "MouseLeaveAction=[!SetOption MeterVal$n SolidColor #ColorPill#][!UpdateMeter MeterVal$n][!Redraw]"
   A "LeftMouseUpAction=[!CommandMeasure MeasureSettings `"$action`"]"

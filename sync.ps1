@@ -6,6 +6,7 @@
 #       and the bundled fonts (Rainmeter locks them; copied only if missing)
 #   - rebuilds and restarts Loopscape if Loopscape.cs changed (or with -RebuildLoopscape); new Loopscape.ini keys are added
 #   - refreshes the widgets
+#   - saves this folder as sourceFolder= in Loopscape.ini, so the tray's Update Loopscape can update from it (update.ps1)
 #   .\sync.ps1            .\sync.ps1 -DryRun            .\sync.ps1 -RebuildLoopscape
 param([switch]$DryRun, [switch]$RebuildLoopscape)
 $ErrorActionPreference = 'Stop'
@@ -106,6 +107,16 @@ if ($staleLw) {
 }
 $lwIni = Join-Path $lwDir 'Loopscape.ini'
 if (Test-Path $lwIni) { Merge-NewKeys (Join-Path $root 'wallpaper\Loopscape.ini') $lwIni }
+# Update Loopscape (tray menu, Settings panel) runs update.ps1 from the clone named here
+if ((Test-Path $lwIni) -and (Test-Path (Join-Path $root '.git'))) {
+  $ini = Read-Text $lwIni
+  $line = "sourceFolder=$root"
+  if ($ini.Text -notmatch "(?m)^sourceFolder=$([regex]::Escape($root))\r?$") {
+    $text = if ($ini.Text -match '(?m)^sourceFolder=') { [regex]::Replace($ini.Text, '(?m)^sourceFolder=[^\r\n]*', $line.Replace('$', '$$')) }
+            else { $ini.Text.TrimEnd("`r", "`n") + "`r`n" + $line + "`r`n" }
+    $changed.Add("$lwIni (sourceFolder)"); Write-Text $lwIni $text $ini.Bom
+  }
+}
 if (-not $DryRun -and -not (Get-Process Loopscape -ErrorAction SilentlyContinue)) {
   # start it through Explorer, like at sign-in (a copy started by this shell could end up inside an app sandbox)
   & explorer.exe $lwExe

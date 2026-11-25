@@ -48,6 +48,7 @@ Four styles come with the installer (riso, shore, pixel clouds, aurora). On the 
 - **Views:** middle-click a widget to switch between its full and simple views.
 - **Always animate:** a checkbox in the tray menu that keeps the wallpaper moving on battery and behind maximized or fullscreen windows. It overrides Settings → Rotation → *On battery* and *Pause when covered*, and uses more battery. *Pause animation* still works.
 - **Start with Windows:** a checkbox in the tray menu (also in Task Manager → Startup apps).
+- **Update Loopscape:** in the tray menu, and in Settings → Look. If you installed with the setup program, it opens the [Releases](https://github.com/choco-mazapan/loopscape/releases) page so you can download the newest installer. If you run Loopscape from a git clone of this repository (see [Building from source](#building-from-source)), it gets the latest code from GitHub, rebuilds Loopscape, updates the widgets and shows what changed.
 - **Video format:** the tray menu's *Video format*. *Automatic* picks the smallest format your graphics chip plays (AV1, then HEVC, then H.264), so the CPU stays idle. On a desktop where battery doesn't matter you can pick AV1 for smaller files even if the CPU has to decode it. Changing it downloads your styles again in that format. Styles that don't look as good in a format are only published in H.264.
 - **Big screens:** the styles are 1080p videos scaled up to fit your screen. On 4K screens the square-pixel styles use sharp 2× scaling, so they look as crisp as on a 1080p screen (`sharpScaling` in Loopscape.ini).
 - **Weather location:** Settings panel → Widgets → City.
@@ -77,9 +78,9 @@ It needs no administrator rights, runs no scripts, and doesn't change your Windo
 
 - [Open-Meteo](https://open-meteo.com/) for the weather and to look up your city (no account, no API key).
 - [BigDataCloud](https://www.bigdatacloud.com/), only if you choose *Windows location*, to name the place.
-- GitHub, to download styles you pick.
+- GitHub, to download styles you pick, and when you choose *Update Loopscape*.
 
-There's no IP-address location lookup, telemetry or update check.
+There's no IP-address location lookup, telemetry or automatic update check: Loopscape only looks for a new version when you choose *Update Loopscape*.
 
 To uninstall, use Settings → Apps → Loopscape → Uninstall. It asks whether to also delete your videos and settings.
 
@@ -93,7 +94,8 @@ Developer setup. Users don't need any of this.
 - `build/build.ps1` compiles everything with the C# compiler built into Windows (.NET Framework 4.x).
 - `build/stage.ps1` and `installer/Loopscape.iss` ([Inno Setup](https://jrsoftware.org/isinfo.php)) build the installer.
 - `skills/loopscape-style/` is the Claude skill for making your own styles (`make_style.py`, with dotfx's `dotfx.py`).
-- `sync.ps1` pushes your working copy to the running setup: it rebuilds what changed, copies the skin and restarts Loopscape.
+- `sync.ps1` pushes your working copy to the running setup: it rebuilds what changed, copies the skin and restarts Loopscape. It also saves the clone's folder as `sourceFolder` in Loopscape.ini.
+- `update.ps1` is what *Update Loopscape* runs when `sourceFolder` is set: it fetches `origin/main`, fast-forwards the clone and runs `sync.ps1`, then shows the result (details in `%USERPROFILE%\Loopscape\update.log`). If the clone has local changes or is on another branch, it lists them and asks before it sets them aside with `git stash` and switches to `main`. Run `git stash pop` to bring the changes back.
 
 Rendering the videos needs [FFmpeg](https://ffmpeg.org/) with libx265, libsvtav1 and libvmaf (`winget install Gyan.FFmpeg`, the full build). The loop goes to `%USERPROFILE%\Loopscape`; each style is rendered once and encoded as H.264, HEVC and AV1 into `build\videos`:
 
