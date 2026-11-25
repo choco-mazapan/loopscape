@@ -1,6 +1,6 @@
 # Downloads the files listed in build\deps.json (mpv, Rainmeter's installer) and the styles release listed in
 # installer\styles-SHA256SUMS.txt into build\deps, checking every SHA-256. Used by the release workflow.
-param([string]$Out = (Join-Path $PSScriptRoot 'deps'), [switch]$SkipStyles)
+param([string]$Out = (Join-Path $PSScriptRoot 'deps'), [switch]$SkipStyles, [string]$StyleFormat = 'hevc')
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -38,7 +38,11 @@ if (-not $SkipStyles) {
   New-Item -ItemType Directory -Force $dir | Out-Null
   foreach ($l in $lines | Select-Object -Skip 1) {
     if ($l -notmatch '^([0-9a-f]{64})\s+(\S+)$') { continue }
-    Get-Checked "https://github.com/choco-mazapan/loopscape/releases/download/$tag/$($Matches[2])" $Matches[1] (Join-Path $dir $Matches[2])
+    $sha = $Matches[1]; $file = $Matches[2]
+    # videos: only the format the installer bundles, plus H.264 for styles that have no file in it
+    # (Loopscape downloads the others itself)
+    if ($file -match '\.(h264|hevc|av1)\.mp4$' -and $Matches[1] -ne $StyleFormat -and $Matches[1] -ne 'h264') { continue }
+    Get-Checked "https://github.com/choco-mazapan/loopscape/releases/download/$tag/$file" $sha (Join-Path $dir $file)
   }
 }
 "Dependencies in $Out"

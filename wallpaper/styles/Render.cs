@@ -2,18 +2,31 @@
 // Pipes raw RGB frames into ffmpeg. Every animated term is periodic in the loop phase t (0..1),
 // so the last frame flows into the first (seamless loop).
 //
-// Usage: Render.exe <style> <out.mp4|out.png> [seconds] [fps] [ffmpeg.exe] [width] [height] [phase 0..1] [seedOffset]
+// Usage: Render.exe <style> <out.mp4|out.png> [seconds] [fps] [ffmpeg.exe] [width] [height] [phase 0..1] [seedOffset] [formats]
 //   phase/seedOffset only matter for .png stills (seedOffset 0 = the same scene as the loop video)
+//   formats: comma list from VideoEncoders (default h264); with several, put {f} in the output path (riso.{f}.mp4)
 //   styles: spectrum | halftone | bluesky | pixelclouds | sunset | riso | dunes | lake | pastel | crt | shore   (light / day)
 //           nightclouds | aurora | nebula | moon | embers | deepsea | rain | bounce                    (dark / night)
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 
 static class Render
 {
     static int W = 1920, H = 1080;
+
+    // Video formats for the loops. Loopscape downloads the one the PC's graphics chip decodes in hardware (AV1, else
+    // HEVC, else H.264), so the CPU stays idle while the wallpaper plays. Quality settings were picked to look the
+    // same as the H.264 version (VMAF against a lossless render). {gop}: a keyframe every 2 s.
+    static readonly Dictionary<string, string> VideoEncoders = new Dictionary<string, string> {
+        { "h264", "-c:v libx264 -preset medium -crf 21 -g {gop}" },
+        { "hevc", "-c:v libx265 -preset slow -crf 23 -x265-params log-level=error:keyint={gop}:min-keyint={gop} -tag:v hvc1" },
+        { "av1", "-c:v libsvtav1 -preset 4 -crf 32 -g {gop} -svtav1-params tune=0" },
+        { "lossless", "-c:v libx264 -preset ultrafast -qp 0 -g {gop}" },   // reference for quality checks
+    };
 
     // ---------- periodic value-noise fBm texture (wraps horizontally) ----------
     class Tex
@@ -124,13 +137,24 @@ static class Render
          0.35, 0.08, 0.70, 0.62,
          0.75, 0.42, 0.22, 0.80,
          1.30, 0.50, 0.08, 0.50 };
-    static readonly double[] NebulaPal = {
-        0.00, 0.006, 0.004, 0.020,
-        0.30, 0.040, 0.016, 0.090,
-        0.55, 0.150, 0.050, 0.260,
-        0.75, 0.140, 0.170, 0.450,
-        0.92, 0.300, 0.250, 0.560,
-        1.10, 0.520, 0.460, 0.740 };
+    static readonly double[] NebulaPal = {   // dark violet -> pink -> pale core
+        0.00, 0.035, 0.030, 0.090,
+        0.30, 0.200, 0.080, 0.420,
+        0.60, 0.560, 0.200, 0.720,
+        0.85, 0.960, 0.450, 0.720,
+        1.00, 1.000, 0.860, 0.800 };
+    // nebula gas density 0..1: a slowly breathing cloud with filaments and dust lanes
+    static double NebulaGas(double X, double Yn, double t)
+    {
+        double w = nB.Sample(X * 1.3 + t, Yn);
+        double u = X * 0.85 + 0.05 * Math.Sin(TAU * t) + 0.12 * (w - 0.5);
+        double d = nA.Sample(u, Clamp(Yn + 0.08 * (w - 0.5) + 0.02 * Math.Cos(TAU * t)));
+        double d2 = nA.Sample(u * 2.1 + 0.5, Clamp(Yn * 1.4 - 0.2));
+        double p = Smooth(0.30, 0.80, d);
+        double fil = Smooth(0.52, 0.72, d2) * p;
+        double dust = 1 - 0.7 * Smooth(0.55, 0.72, nB.Sample(u * 2.2 + 0.31, Yn));
+        return Clamp((p * 0.85 + 0.25 * fil) * dust);
+    }
 
     static readonly double[] SunsetSky = {
         0.00, 0.24, 0.17, 0.42,
@@ -438,26 +462,15 @@ static class Render
             }
             case "nebula":
             {
-                // slowly breathing purple/indigo gas, fine colour dither (sparkles on the dimmest cells), sparse stars
-                double w = nB.Sample(X * 1.3 + t, Yn);
-                double u = X * 0.85 + 0.05 * Math.Sin(TAU * t) + 0.12 * (w - 0.5);
-                double d = nA.Sample(u, Clamp(Yn + 0.08 * (w - 0.5) + 0.02 * Math.Cos(TAU * t)));
-                double d2 = nA.Sample(u * 2.1 + 0.5, Clamp(Yn * 1.4 - 0.2));
-                double p = Smooth(0.30, 0.80, d);
-                double fil = Smooth(0.52, 0.72, d2) * p;
-                double dust = 1 - 0.7 * Smooth(0.55, 0.72, nB.Sample(u * 2.2 + 0.31, Yn));
-                Palette(NebulaPal, (p * 0.85 + 0.25 * fil) * dust, out r, out g, out b);
-                if (Hash(cx, cy, 11) < 0.0009)
+                // LED panel: fixed round dots, each lit with the gas colour; stars are single bright LEDs
+                double gas = NebulaGas(X, Yn, t);
+                Palette(NebulaPal, gas, out r, out g, out b);
+                if (gas < 0.15 && Hash(cx, cy, 11) < 0.010)
                 {
                     double tw = 0.5 + 0.5 * Math.Sin(TAU * ((1 + (int)(Hash(cx, cy, 12) * 3)) * t + Hash(cx, cy, 13)));
-                    double s = (Hash(cx, cy, 14) < 0.15 ? 0.9 : 0.35) * (0.4 + 0.6 * tw);
-                    r += 0.85 * s; g += 0.8 * s; b += s;
+                    double s = (Hash(cx, cy, 14) < 0.2 ? 1.0 : 0.5) * (0.3 + 0.7 * tw);
+                    r = Lerp(r, 0.90, s); g = Lerp(g, 0.92, s); b = Lerp(b, 1.0, s);
                 }
-                const int L = 16;
-                double[] v = { r, g, b };
-                for (int ch = 0; ch < 3; ch++)
-                    v[ch] = Clamp(Math.Floor(Clamp(v[ch]) * (L - 1) + Hash(cx, cy, ch + 20)) / (L - 1));
-                r = v[0]; g = v[1]; b = v[2];
                 break;
             }
             case "sunset":
@@ -997,6 +1010,14 @@ static class Render
                         r = Lerp(0.01, r, cov); g = Lerp(0.015, g, cov); b = Lerp(0.03, b, cov);
                         break;
                     }
+                    case "nebula":      // LED panel: fixed round dot (80% of the cell), faint glow of its colour around it
+                    {
+                        double c0 = (Cell - 1) / 2.0, dx = lx - c0, dy = ly - c0;
+                        double cov = Clamp(Cell * 0.40 - Math.Sqrt(dx * dx + dy * dy) + 0.5);
+                        double gl = 0.10;
+                        r = Lerp(r * gl, r, cov); g = Lerp(g * gl, g, cov); b = Lerp(b * gl, b, cov);
+                        break;
+                    }
                     case "pixelclouds": // tiles with a slightly darker grout line
                         if (lx == Cell - 1 || ly == Cell - 1) { r *= 0.86; g *= 0.86; b *= 0.86; }
                         break;
@@ -1027,7 +1048,7 @@ static class Render
             case "pixelclouds": Cell = 10; nA = new Tex(1024, 576, 44, 3, 7, 0.55f); nB = new Tex(512, 288, 42, 6, 5, 0.5f); break;
             case "nightclouds": Cell = 4; nA = new Tex(1024, 576, 71, 3, 7, 0.55f); nB = new Tex(512, 288, 72, 6, 5, 0.5f); break;
             case "aurora": Cell = 4; nA = new Tex(512, 288, 61, 3, 5, 0.5f); nB = new Tex(1024, 576, 62, 6, 6, 0.6f); break;
-            case "nebula": Cell = 2; nA = new Tex(1024, 576, 53, 3, 7, 0.6f); nB = new Tex(512, 288, 52, 4, 5, 0.5f); break;
+            case "nebula": Cell = 12; nA = new Tex(1024, 576, 53, 3, 7, 0.6f); nB = new Tex(512, 288, 52, 4, 5, 0.5f); break;
             case "sunset": Cell = 5; nA = new Tex(512, 288, 81, 3, 5, 0.5f); nB = new Tex(512, 288, 82, 6, 5, 0.5f); break;
             case "riso": Cell = 9; nA = new Tex(512, 288, 91, 2, 4, 0.5f); nB = nA; break;
             case "dunes": Cell = 4; nA = new Tex(512, 288, 101, 2, 4, 0.5f); nB = new Tex(512, 288, 102, 3, 4, 0.5f); break;
@@ -1045,12 +1066,28 @@ static class Render
 
         bool still = outPath.EndsWith(".png", StringComparison.OrdinalIgnoreCase);
         int frames = still ? 1 : seconds * fps;
-        string enc = still
-            ? "-frames:v 1"
-            : "-c:v libx264 -preset medium -crf 21 -g " + (fps * 2) +
-              " -vf scale=out_color_matrix=bt709:out_range=tv,format=yuv420p -colorspace bt709 -color_primaries bt709 -color_trc bt709 -movflags +faststart";
+        string enc;
+        if (still) enc = "-frames:v 1 \"" + outPath + "\"";
+        else
+        {
+            // One render, one file per format: "{f}" in the output path is replaced by the format name.
+            // Formats: a[9] (comma list, default h264). Settings are in VideoEncoders.
+            string[] formats = (a.Length > 9 ? a[9] : "h264").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            if (formats.Length > 1 && !outPath.Contains("{f}")) { Console.Error.WriteLine("several formats need {f} in the output path"); return 1; }
+            var sb = new StringBuilder("-filter_complex \"[0:v]scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,split=" + formats.Length);
+            for (int i = 0; i < formats.Length; i++) sb.Append("[v" + i + "]");
+            sb.Append("\"");
+            for (int i = 0; i < formats.Length; i++)
+            {
+                string f = formats[i].Trim().ToLowerInvariant(), args;
+                if (!VideoEncoders.TryGetValue(f, out args)) { Console.Error.WriteLine("unknown format " + f); return 1; }
+                sb.Append(" -map [v" + i + "] " + args.Replace("{gop}", (fps * 2).ToString()) +
+                          " -colorspace bt709 -color_primaries bt709 -color_trc bt709 -movflags +faststart \"" + outPath.Replace("{f}", f) + "\"");
+            }
+            enc = sb.ToString();
+        }
         var psi = new ProcessStartInfo(ffmpeg,
-            "-hide_banner -loglevel error -y -f rawvideo -pix_fmt rgb24 -s " + W + "x" + H + " -r " + fps + " -i - " + enc + " \"" + outPath + "\"");
+            "-hide_banner -loglevel error -y -f rawvideo -pix_fmt rgb24 -s " + W + "x" + H + " -r " + fps + " -i - " + enc);
         psi.UseShellExecute = false; psi.RedirectStandardInput = true;
         Console.InputEncoding = new System.Text.UTF8Encoding(false); // otherwise .NET writes a BOM into ffmpeg's stdin
         var p = Process.Start(psi);

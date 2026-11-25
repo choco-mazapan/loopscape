@@ -32,7 +32,7 @@ Works on Windows 10 and 11 (64-bit).
 
 The installer isn't code-signed yet, so Windows SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**. `SHA256SUMS.txt` on the release page has the installer's checksum, and the [release workflow](.github/workflows/release.yml) log shows it was built from the tagged source.
 
-Four styles come with the installer (riso, shore, pixel clouds, aurora). On the **Wallpaper styles** page, choose whether to download the other 15 after setup (about 400 MB): all of them, none, or the ones you tick. They download in the background, about 10–50 MB each. Any you skip download the first time you pick them, or all at once from the tray icon's menu.
+Four styles come with the installer (riso, shore, pixel clouds, aurora). On the **Wallpaper styles** page, choose whether to download the other 15 after setup (about 250 MB): all of them, none, or the ones you tick. They download in the background, about 5–55 MB each. Any you skip download the first time you pick them, or all at once from the tray icon's menu.
 
 ## Usage
 
@@ -40,6 +40,7 @@ Four styles come with the installer (riso, shore, pixel clouds, aurora). On the 
 - **Rotate styles:** choose *Rotate day/night* in the Settings panel. It changes style every hour, with dark styles at night.
 - **Skip to the next style:** Win+Alt+N.
 - **Start with Windows:** a checkbox in the tray menu (also in Task Manager → Startup apps).
+- **Video format:** the tray menu's *Video format*. *Automatic* picks the smallest format your graphics chip plays (AV1, then HEVC, then H.264), so the CPU stays idle. On a desktop where battery doesn't matter you can pick AV1 for smaller files even if the CPU has to decode it. Changing it downloads your styles again in that format. Styles that don't look as good in a format are only published in H.264.
 - **Weather location:** Settings panel → Widgets → City.
 - **Advanced settings:** `%USERPROFILE%\Loopscape\Loopscape.ini` (commented; changes apply by themselves).
 
@@ -75,14 +76,14 @@ Developer setup. Users don't need any of this.
 - `build/stage.ps1` and `installer/Loopscape.iss` ([Inno Setup](https://jrsoftware.org/isinfo.php)) build the installer.
 - `sync.ps1` pushes your working copy to the running setup: it rebuilds what changed, copies the skin and restarts Loopscape.
 
-Rendering the videos needs [FFmpeg](https://ffmpeg.org/) (`winget install Gyan.FFmpeg`). It writes them to `%USERPROFILE%\Loopscape`:
+Rendering the videos needs [FFmpeg](https://ffmpeg.org/) with libx265, libsvtav1 and libvmaf (`winget install Gyan.FFmpeg`, the full build). The loop goes to `%USERPROFILE%\Loopscape`; each style is rendered once and encoded as H.264, HEVC and AV1 into `build\videos`:
 
 ```powershell
 .\wallpaper\make-loop.ps1
 .\wallpaper\styles\build-styles.ps1
 ```
 
-`build-styles.ps1 -Styles riso,shore` renders only some styles, and `-Preview` renders one still per style. `wallpaper\styles\make-stills.ps1` renders PNG stills for use as a normal Windows background.
+HEVC and AV1 files are kept only if they're at least 15% smaller than H.264 and score within 1 VMAF point of it against a lossless render (`-MinSaving`, `-MaxVmafLoss`; results in `build\videos\quality.txt`). A full render takes about 2 hours of CPU. `build-styles.ps1 -Styles riso,shore` renders only some styles, and `-Preview` renders one still per style. `wallpaper\styles\make-stills.ps1` renders PNG stills for use as a normal Windows background.
 
 To make a release:
 

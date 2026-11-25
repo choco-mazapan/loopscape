@@ -3,14 +3,16 @@
 #   stage\data\   -> %USERPROFILE%\Loopscape               (Loopscape.ini, loop.mp4, all stills, the bundled videos)
 #   stage\skin\   -> Documents\Rainmeter\Skins\LaptopInfo      (the widgets, with WeatherFetch.exe / WifiInfo.exe)
 #   stage\redist\ -> Rainmeter's official installer (run only if the user ticks "Install Rainmeter")
-# Dev/CI only. Videos come from -StylesDir: your rendered ones, or the styles release downloaded by CI. Bundled
-# videos must match installer\styles.json (written by build\make-styles-release.ps1), or Loopscape would treat them
-# as different files from the ones it downloads.
+# Dev/CI only. Videos, loop.mp4 and stills.zip come from -StylesDir: build\styles-release (written by
+# build\make-styles-release.ps1), or the styles release downloaded by CI. The bundled styles are the -BundledFormat
+# files (HEVC: played by nearly every graphics chip; H.264 where a style has no HEVC file), saved as styles\<style>.mp4. They must match
+# installer\styles.json, or Loopscape would treat them as files it didn't list.
 #   .\build\stage.ps1 -RainmeterSetup C:\Downloads\Rainmeter-4.5.x.exe
 param(
-  [string]$StylesDir = "$env:USERPROFILE\Loopscape\styles",
-  [string]$LoopMp4 = '',          # default: loop.mp4 next to -StylesDir
-  [string]$StillsZip = '',        # CI: stills.zip from the styles release; default: the PNGs in -StylesDir
+  [string]$StylesDir = (Join-Path $PSScriptRoot 'styles-release'),
+  [string]$LoopMp4 = '',          # default: -StylesDir\loop.mp4
+  [string]$StillsZip = '',        # default: -StylesDir\stills.zip
+  [string]$BundledFormat = 'hevc',
   [string]$MpvDir = "$env:ProgramFiles\MPV Player",
   [string]$RainmeterSetup = '',
   [string[]]$Bundled = @('riso', 'shore', 'pixelclouds', 'aurora'),
@@ -19,7 +21,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $built = Join-Path $PSScriptRoot 'out'
-if (-not $LoopMp4) { $LoopMp4 = Join-Path (Split-Path $StylesDir -Parent) 'loop.mp4' }
+if (-not $LoopMp4) { $LoopMp4 = Join-Path $StylesDir 'loop.mp4' }
+if (-not $StillsZip) { $StillsZip = Join-Path $StylesDir 'stills.zip' }
 & (Join-Path $PSScriptRoot 'build.ps1') -OutDir $built | Out-Null
 
 $manifest = Join-Path $root 'installer\styles.json'
@@ -43,16 +46,17 @@ foreach ($f in 'mpv.exe', 'd3dcompiler_43.dll') {
 # ---- data ----
 Copy-Item (Join-Path $root 'wallpaper\Loopscape.ini') $data
 Copy-Item $LoopMp4 (Join-Path $data 'loop.mp4')
-if ($StillsZip) { Expand-Archive $StillsZip -DestinationPath "$data\styles" }
-else { Copy-Item (Join-Path $StylesDir '*.png') "$data\styles" }
+Expand-Archive $StillsZip -DestinationPath "$data\styles"
 foreach ($b in $Bundled) {
-  $e = $styles | Where-Object { $_.name -eq $b }
+  # styles whose -BundledFormat file failed the quality gate (see build-styles.ps1) are only published as H.264
+  $e = $styles | Where-Object { $_.name -eq $b -and $_.format -eq $BundledFormat }
+  if (-not $e) { $e = $styles | Where-Object { $_.name -eq $b -and $_.format -eq 'h264' } }
   if (-not $e) { throw "bundled style $b is not in installer\styles.json" }
   $src = Join-Path $StylesDir $e.file
   if ((Get-FileHash $src -Algorithm SHA256).Hash.ToLowerInvariant() -ne $e.sha256) {
     throw "$src does not match installer\styles.json (re-rendered? run build\make-styles-release.ps1 with a new tag)"
   }
-  Copy-Item $src "$data\styles"
+  Copy-Item $src "$data\styles\$b.mp4"
 }
 
 # ---- skin (tracked files only, so nothing from a dev setup leaks in) ----
@@ -72,4 +76,4 @@ if ($RainmeterSetup) { Copy-Item $RainmeterSetup (Join-Path $redist 'Rainmeter-s
 else { Write-Warning 'no -RainmeterSetup given: this installer will not offer to install Rainmeter' }
 
 $size = (Get-ChildItem $Out -Recurse -File | Measure-Object Length -Sum).Sum
-"Staged $([math]::Round($size / 1MB)) MB in $Out ($($styles.Count) styles in styles.json, $($Bundled.Count) bundled)"
+"Staged $([math]::Round($size / 1MB)) MB in $Out ($(@($styles.name | Sort-Object -Unique).Count) styles in styles.json, $($Bundled.Count) bundled)"

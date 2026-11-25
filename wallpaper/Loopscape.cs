@@ -1028,6 +1028,7 @@ static class Loopscape
             getAll.Click += delegate { foreach (string n in StyleDownloads.Missing()) StyleDownloads.Request(n); };
             menu.Items.Add(getAll);
         }
+        menu.Items.Add(VideoFormatMenu(ini));
         var autostart = new System.Windows.Forms.ToolStripMenuItem("Start with Windows");
         autostart.Checked = StartsWithWindows();
         autostart.Click += delegate { SetStartWithWindows(!StartsWithWindows()); };
@@ -1037,6 +1038,42 @@ static class Loopscape
         quit.Click += delegate { Quit("tray icon"); };
         menu.Items.Add(quit);
     }
+    // Video format for downloaded styles (videoFormat= in Loopscape.ini). Automatic picks the smallest format the graphics
+    // chip plays by itself; AV1 without hardware support saves disk space and download time but keeps the CPU busier.
+    static System.Windows.Forms.ToolStripMenuItem VideoFormatMenu(Dictionary<string, string> ini)
+    {
+        string v;
+        string cur = ini.TryGetValue("videoFormat", out v) ? v.Trim().ToLowerInvariant() : "auto";
+        if (Array.IndexOf(StyleDownloads.Formats, cur) < 0) cur = "auto";
+        var names = new Dictionary<string, string> { { "av1", "AV1" }, { "hevc", "HEVC" }, { "h264", "H.264" } };
+        var sub = new System.Windows.Forms.ToolStripMenuItem("Video format");
+        var auto = new System.Windows.Forms.ToolStripMenuItem("Automatic: " + names[GpuDecode.Best()] + " on this PC (lowest CPU use)");
+        auto.Checked = cur == "auto";
+        auto.Click += delegate { SetVideoFormat("auto"); };
+        sub.DropDownItems.Add(auto);
+        sub.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
+        var sizes = new Dictionary<string, string> { { "av1", "smallest files" }, { "hevc", "small files" }, { "h264", "largest files" } };
+        foreach (string f in StyleDownloads.Formats)
+        {
+            string fmt = f;
+            var it = new System.Windows.Forms.ToolStripMenuItem(names[f] + ": " + sizes[f] +
+                (GpuDecode.Has(f) ? ", played by the graphics chip" : ", played by the CPU here (more battery)"));
+            it.Checked = cur == f;
+            it.Click += delegate { SetVideoFormat(fmt); };
+            sub.DropDownItems.Add(it);
+        }
+        sub.DropDownItems.Add(new System.Windows.Forms.ToolStripSeparator());
+        var note = new System.Windows.Forms.ToolStripMenuItem("Changing it downloads your styles again in that format");
+        note.Enabled = false;
+        sub.DropDownItems.Add(note);
+        return sub;
+    }
+    static void SetVideoFormat(string f)
+    {
+        Log("tray: video format " + f);
+        SetLine(Path.Combine(Dir, "Loopscape.ini"), "videoFormat", f, true);   // the settings reload queues the downloads
+    }
+
     static string HotkeyLabel(string spec)
     {
         var parts = new List<string>();
@@ -1177,7 +1214,9 @@ static class Loopscape
             StyleDownloads.Changed += delegate { downloadDone = true; };
 
             LoadConfig();
+            StyleDownloads.CleanUp();
             StyleDownloads.QueueFromFile();   // styles picked in the installer
+            StyleDownloads.CheckFormats();    // styles on disk in another format than the wanted one
             // onBattery: static = fade to your Windows wallpaper and close mpv; pause = freeze video; play = keep animating
             string onBattery = Get("onBattery", "static").ToLowerInvariant();
             bool pauseWhenCovered = GetBool("pauseWhenCovered", true);
@@ -1213,6 +1252,7 @@ static class Loopscape
                         pauseWhenCovered = GetBool("pauseWhenCovered", true);
                         fadeMs = Math.Max(0, GetInt("fadeMs", 1500));
                         Log("settings reloaded");
+                        StyleDownloads.CheckFormats();
                     }
                     // Skip to the next style (hotkey, or @Resources\wallnext.txt touched by a widget / the panel)
                     DateTime ns = NextFileStamp();
@@ -1296,33 +1336,39 @@ static class Loopscape
     public static void LogLine(string m) { Log(m); }
 
     // ---------------- Style downloads ----------------
-    // styles.json next to Loopscape.exe lists the styles that can be fetched (name, file, size, sha256) and baseUrl, the
-    // project's own GitHub release that holds them (stylesUrl= in Loopscape.ini overrides it; https only). A download
-    // goes to styles\<file>.part, must match the listed size and SHA-256, and is only then renamed into place.
+    // styles.json next to Loopscape.exe lists the styles that can be fetched and baseUrl, the project's own GitHub
+    // release that holds them (stylesUrl= in Loopscape.ini overrides it; https only). Each style comes in several video
+    // formats (name, format, file, size, sha256 per entry); whichever is downloaded is saved as styles\<name>.mp4, so the
+    // rest of Loopscape doesn't care about the format. A download goes to styles\<name>.mp4.part, must match the listed
+    // size and SHA-256, and only then replaces the file.
+    // Format: videoFormat= in Loopscape.ini (auto, av1, hevc, h264). auto = the smallest one the graphics chip decodes in
+    // hardware (GpuDecode), so playing the wallpaper costs next to no CPU. A style on disk in another listed format is
+    // replaced in the background (e.g. after the setting changes); files that match no listed entry are left alone.
     static class StyleDownloads
     {
-        class Entry { public string Name = "", File = "", Sha256 = ""; public long Size; }
-        static Dictionary<string, Entry> manifest;
+        class Entry { public string Name = "", Format = "", File = "", Sha256 = ""; public long Size; }
+        static Dictionary<string, Dictionary<string, Entry>> manifest;   // style -> format -> entry
         static string baseUrl = "";
         static readonly object gate = new object();
         static readonly Queue<string> queue = new Queue<string>();
         static readonly Dictionary<string, DateTime> failedAt = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
-        static string current = "", failed = "";
+        static string current = "", failed = "", lastPreferred = "";
         static long got, total;
         static Thread worker;
         public static event Action Changed;   // a download started, made progress, finished or failed
+        public static readonly string[] Formats = { "av1", "hevc", "h264" };
 
         static string Field(string obj, string key)
         {
             var m = Regex.Match(obj, "\"" + key + "\"\\s*:\\s*\"?([^\",}]*)\"?");
             return m.Success ? m.Groups[1].Value.Trim() : "";
         }
-        static Dictionary<string, Entry> Manifest()
+        static Dictionary<string, Dictionary<string, Entry>> Manifest()
         {
             lock (gate)
             {
                 if (manifest != null) return manifest;
-                var m = new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
+                var m = new Dictionary<string, Dictionary<string, Entry>>(StringComparer.OrdinalIgnoreCase);
                 try
                 {
                     string path = Path.Combine(ExeDir, "styles.json");
@@ -1332,11 +1378,16 @@ static class Loopscape
                         baseUrl = Field(json, "baseUrl");
                         foreach (Match o in Regex.Matches(json, "\\{[^{}]*\\}"))
                         {
-                            var e = new Entry { Name = Field(o.Value, "name"), File = Field(o.Value, "file"), Sha256 = Field(o.Value, "sha256").ToLowerInvariant() };
+                            var e = new Entry { Name = Field(o.Value, "name"), Format = Field(o.Value, "format").ToLowerInvariant(),
+                                                File = Field(o.Value, "file"), Sha256 = Field(o.Value, "sha256").ToLowerInvariant() };
+                            if (e.Format.Length == 0) e.Format = "h264";
                             long.TryParse(Field(o.Value, "size"), out e.Size);
-                            if (e.Name.Length > 0 && e.File.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) && e.Sha256.Length == 64
-                                && e.File.IndexOfAny(Path.GetInvalidFileNameChars()) < 0)
-                                m[e.Name] = e;
+                            if (e.Name.Length == 0 || !e.File.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) || e.Sha256.Length != 64
+                                || e.File.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || e.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                                continue;
+                            Dictionary<string, Entry> byFormat;
+                            if (!m.TryGetValue(e.Name, out byFormat)) m[e.Name] = byFormat = new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
+                            byFormat[e.Format] = e;
                         }
                     }
                 }
@@ -1345,29 +1396,70 @@ static class Loopscape
                 return m;
             }
         }
-        static string Target(Entry e) { return Path.Combine(Dir, "styles", e.File); }
+        static string Target(string name) { return Path.Combine(Dir, "styles", name + ".mp4"); }
+
+        // The format to download: videoFormat= in Loopscape.ini, or (auto) what the graphics chip decodes
+        public static string Preferred()
+        {
+            string f = Get("videoFormat", "auto").Trim().ToLowerInvariant();
+            return Array.IndexOf(Formats, f) >= 0 ? f : GpuDecode.Best();
+        }
+        // The entry to fetch for a style: the preferred format, else the cheapest one to play that is listed
+        static Entry Pick(string name)
+        {
+            Dictionary<string, Entry> byFormat;
+            if (!Manifest().TryGetValue(name, out byFormat)) return null;
+            Entry e;
+            foreach (string f in new[] { Preferred(), "hevc", "h264", "av1" })
+                if (byFormat.TryGetValue(f, out e)) return e;
+            return null;
+        }
+        // The listed format of the style's file on disk (matched by size), "" if it isn't on disk or isn't a listed file
+        static string LocalFormat(string name)
+        {
+            Dictionary<string, Entry> byFormat;
+            if (!Manifest().TryGetValue(name, out byFormat)) return "";
+            try
+            {
+                var fi = new FileInfo(Target(name));
+                if (!fi.Exists) return "";
+                foreach (var e in byFormat.Values) if (e.Size == fi.Length) return e.Format;
+            }
+            catch { }
+            return "";
+        }
+        static bool NeedsDownload(string name)
+        {
+            Entry want = Pick(name);
+            if (want == null) return false;
+            if (!System.IO.File.Exists(Target(name))) return true;
+            string have = LocalFormat(name);
+            return have.Length > 0 && have != want.Format;
+        }
 
         // Styles that styles.json can fetch and that aren't on disk yet
         public static List<string> Missing()
         {
             var list = new List<string>();
-            foreach (var e in Manifest().Values) if (!System.IO.File.Exists(Target(e))) list.Add(e.Name);
+            foreach (string n in Manifest().Keys) if (!System.IO.File.Exists(Target(n))) list.Add(n);
             return list;
         }
 
-        // Queue a style for download. True while it is queued or downloading; false if it can't be fetched (not in
-        // styles.json, already on disk, or it failed in the last 10 minutes).
+        // Queue a style for download. True while it is queued or downloading; false if there's nothing to fetch (not in
+        // styles.json, already on disk in the wanted format) or it failed in the last 10 minutes.
         public static bool Request(string name)
         {
-            Entry e;
-            if (!Manifest().TryGetValue(name, out e) || System.IO.File.Exists(Target(e))) return false;
             lock (gate)
             {
-                if (current == e.Name || queue.Contains(e.Name)) return true;
+                if (current.Equals(name, StringComparison.OrdinalIgnoreCase) || queue.Contains(name.ToLowerInvariant())) return true;
+            }
+            if (!NeedsDownload(name)) return false;
+            lock (gate)
+            {
                 DateTime t;
-                if (failedAt.TryGetValue(e.Name, out t) && DateTime.Now - t < TimeSpan.FromMinutes(10)) return false;
-                if (failed == e.Name) failed = "";
-                queue.Enqueue(e.Name);
+                if (failedAt.TryGetValue(name, out t) && DateTime.Now - t < TimeSpan.FromMinutes(10)) return false;
+                if (failed.Equals(name, StringComparison.OrdinalIgnoreCase)) failed = "";
+                queue.Enqueue(name.ToLowerInvariant());
                 if (worker == null)
                 {
                     worker = new Thread(Run);
@@ -1376,6 +1468,18 @@ static class Loopscape
                 }
             }
             return true;
+        }
+
+        // At start and when the format setting changes: styles on disk in another listed format get the wanted one
+        public static void CheckFormats()
+        {
+            string pref = Preferred();
+            if (pref == lastPreferred) return;
+            lastPreferred = pref;
+            int n = 0;
+            foreach (string name in Manifest().Keys)
+                if (System.IO.File.Exists(Target(name)) && NeedsDownload(name) && Request(name)) n++;
+            Log("video format: " + pref + (n > 0 ? " (" + n + " styles to replace)" : ""));
         }
 
         // "downloading Aurora 42%", "download failed: Aurora", or ""
@@ -1395,20 +1499,29 @@ static class Loopscape
         {
             while (true)
             {
-                Entry e;
+                string name;
+                Entry e = null;
                 lock (gate)
                 {
                     if (queue.Count == 0) { current = ""; worker = null; break; }
-                    e = Manifest()[queue.Dequeue()];
-                    current = e.Name; got = 0; total = e.Size;
+                    name = queue.Dequeue();
+                    current = name; got = 0; total = 0;
                 }
-                Fire();
-                try { Download(e); }
+                try
+                {
+                    if (NeedsDownload(name))
+                    {
+                        e = Pick(name);
+                        lock (gate) total = e.Size;
+                        Fire();
+                        Download(e);
+                    }
+                }
                 catch (Exception ex)
                 {
-                    Log("download " + e.File + " failed: " + ex.Message);
-                    try { System.IO.File.Delete(Target(e) + ".part"); } catch { }
-                    lock (gate) { failedAt[e.Name] = DateTime.Now; failed = e.Name; }
+                    Log("download " + (e != null ? e.File : name) + " failed: " + ex.Message);
+                    try { System.IO.File.Delete(Target(name) + ".part"); } catch { }
+                    lock (gate) { failedAt[name] = DateTime.Now; failed = name; }
                 }
             }
             Fire();
@@ -1421,7 +1534,7 @@ static class Loopscape
             if (!url.EndsWith("/")) url += "/";
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
             Directory.CreateDirectory(Path.Combine(Dir, "styles"));
-            string dest = Target(e), part = dest + ".part";
+            string dest = Target(e.Name), part = dest + ".part";
             Log("downloading " + url + e.File);
             var req = (HttpWebRequest)WebRequest.Create(url + Uri.EscapeDataString(e.File));
             req.UserAgent = "Loopscape";
@@ -1448,10 +1561,30 @@ static class Loopscape
                 string hex = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
                 if (hex != e.Sha256) throw new Exception("checksum mismatch");
             }
-            if (System.IO.File.Exists(dest)) System.IO.File.Delete(dest);
+            // Replacing a style in another format: mpv may be playing the old file. Windows lets us rename it while it's
+            // open; mpv keeps playing it until it next loads a file, and the renamed copy is deleted then (or at start).
+            if (System.IO.File.Exists(dest))
+            {
+                string old = dest + ".old";
+                try { System.IO.File.Delete(old); } catch { }
+                System.IO.File.Move(dest, old);
+                try { System.IO.File.Delete(old); } catch { }
+            }
             System.IO.File.Move(part, dest);
             Log("downloaded " + e.File);
             PruneListFile();
+        }
+
+        // Leftovers of an interrupted download or a replaced file
+        public static void CleanUp()
+        {
+            try
+            {
+                foreach (string f in Directory.GetFiles(Path.Combine(Dir, "styles"), "*.mp4.*"))
+                    if (f.EndsWith(".old", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".part", StringComparison.OrdinalIgnoreCase))
+                        try { System.IO.File.Delete(f); } catch { }
+            }
+            catch { }
         }
 
         // download-styles.txt in the data folder: styles the installer was asked to fetch (one name per line). They
@@ -1486,14 +1619,83 @@ static class Loopscape
                 if (!System.IO.File.Exists(ListFile)) return;
                 var left = new List<string>();
                 foreach (string n in ListedStyles())
-                {
-                    Entry e;
-                    if (Manifest().TryGetValue(n, out e) && !System.IO.File.Exists(Target(e))) left.Add(n);
-                }
+                    if (Manifest().ContainsKey(n) && !System.IO.File.Exists(Target(n))) left.Add(n);
                 if (left.Count == 0) System.IO.File.Delete(ListFile);
                 else System.IO.File.WriteAllLines(ListFile, left.ToArray());
             }
             catch { }
+        }
+    }
+
+    // ---------------- Hardware video decoding ----------------
+    // Which video formats the graphics chip decodes itself (asked through Direct3D 11, like mpv's d3d11va decoder).
+    // Formats it can't decode fall back to the CPU, which costs battery all the time the wallpaper plays.
+    static class GpuDecode
+    {
+        [DllImport("d3d11.dll")]
+        static extern int D3D11CreateDevice(IntPtr adapter, int driverType, IntPtr software, uint flags, IntPtr levels,
+                                            uint numLevels, uint sdkVersion, out IntPtr device, IntPtr level, IntPtr context);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate uint ProfileCountFn(IntPtr self);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int ProfileFn(IntPtr self, uint index, out Guid profile);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int CheckFormatFn(IntPtr self, ref Guid profile, int format, out int supported);
+
+        static readonly Guid VideoDeviceIid = new Guid("10EC4D5B-975A-4689-B9E4-D0AAC30FE333");   // ID3D11VideoDevice
+        static readonly Dictionary<string, Guid> Profiles = new Dictionary<string, Guid> {
+            { "av1", new Guid("b8be4ccb-cf53-46ba-8d59-d6b8a6da5d2a") },    // D3D11_DECODER_PROFILE_AV1_VLD_PROFILE0
+            { "hevc", new Guid("5b11d51b-2f4c-4452-bcc3-09f2a1160cc0") },   // D3D11_DECODER_PROFILE_HEVC_VLD_MAIN
+            { "h264", new Guid("1b81be68-a0c7-11d3-b984-00c04f2e73c5") },   // D3D11_DECODER_PROFILE_H264_VLD_NOFGT
+        };
+        static HashSet<string> supported;
+        static readonly object gate = new object();
+
+        public static bool Has(string format) { return Supported().Contains(format); }
+        // The smallest format played in hardware; H.264 when there's none (cheapest in software too)
+        public static string Best()
+        {
+            foreach (string f in new[] { "av1", "hevc" }) if (Has(f)) return f;
+            return "h264";
+        }
+
+        static HashSet<string> Supported()
+        {
+            lock (gate)
+            {
+                if (supported != null) return supported;
+                supported = new HashSet<string>();
+                IntPtr dev = IntPtr.Zero, vd = IntPtr.Zero;
+                try
+                {
+                    // D3D_DRIVER_TYPE_HARDWARE, D3D11_CREATE_DEVICE_VIDEO_SUPPORT (needs a driver with video), SDK 7
+                    if (D3D11CreateDevice(IntPtr.Zero, 1, IntPtr.Zero, 0x800, IntPtr.Zero, 0, 7, out dev, IntPtr.Zero, IntPtr.Zero) < 0
+                        && D3D11CreateDevice(IntPtr.Zero, 1, IntPtr.Zero, 0, IntPtr.Zero, 0, 7, out dev, IntPtr.Zero, IntPtr.Zero) < 0)
+                        throw new Exception("no Direct3D 11 device");
+                    Guid iid = VideoDeviceIid;
+                    if (Marshal.QueryInterface(dev, ref iid, out vd) < 0) throw new Exception("no video device");
+                    // ID3D11VideoDevice vtable: IUnknown (0-2), 8 Create* methods (3-10), GetVideoDecoderProfileCount (11),
+                    // GetVideoDecoderProfile (12), CheckVideoDecoderFormat (13)
+                    IntPtr vtbl = Marshal.ReadIntPtr(vd);
+                    var count = (ProfileCountFn)Marshal.GetDelegateForFunctionPointer(Marshal.ReadIntPtr(vtbl, 11 * IntPtr.Size), typeof(ProfileCountFn));
+                    var get = (ProfileFn)Marshal.GetDelegateForFunctionPointer(Marshal.ReadIntPtr(vtbl, 12 * IntPtr.Size), typeof(ProfileFn));
+                    var check = (CheckFormatFn)Marshal.GetDelegateForFunctionPointer(Marshal.ReadIntPtr(vtbl, 13 * IntPtr.Size), typeof(CheckFormatFn));
+                    var have = new HashSet<Guid>();
+                    uint n = count(vd);
+                    for (uint i = 0; i < n; i++) { Guid g; if (get(vd, i, out g) >= 0) have.Add(g); }
+                    foreach (var kv in Profiles)
+                    {
+                        if (!have.Contains(kv.Value)) continue;
+                        Guid g = kv.Value; int ok;
+                        if (check(vd, ref g, 103 /* DXGI_FORMAT_NV12: 8-bit 4:2:0 */, out ok) >= 0 && ok != 0) supported.Add(kv.Key);
+                    }
+                }
+                catch (Exception e) { Log("hardware decode check: " + e.Message); }
+                finally
+                {
+                    if (vd != IntPtr.Zero) Marshal.Release(vd);
+                    if (dev != IntPtr.Zero) Marshal.Release(dev);
+                }
+                Log("hardware video decoding: " + (supported.Count > 0 ? string.Join(", ", new List<string>(supported).ToArray()) : "none found"));
+                return supported;
+            }
         }
     }
 }

@@ -33,7 +33,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = ((Get-Content installer/styles-SHA256SUMS.txt -First 1) -replace '^#\s*', '').Trim()
-          gh release download $tag --dir build/deps/styles --clobber
+          # the installer bundles HEVC videos (H.264 for styles without one); Loopscape downloads other formats itself
+          gh release download $tag --dir build/deps/styles --clobber --pattern '*.hevc.mp4' --pattern '*.h264.mp4' --pattern loop.mp4 --pattern stills.zip
 
       - name: Dependencies (checked against build/deps.json and installer/styles-SHA256SUMS.txt)
         shell: pwsh
