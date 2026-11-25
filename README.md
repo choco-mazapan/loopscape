@@ -52,6 +52,15 @@ Four styles come with the installer (riso, shore, pixel clouds, aurora). On the 
 - **Weather location:** Settings panel → Widgets → City.
 - **Advanced settings:** `%USERPROFILE%\Loopscape\Loopscape.ini` (commented; changes apply by themselves).
 
+## Make your own style with Claude
+
+[`skills/loopscape-style`](skills/loopscape-style) is a [Claude skill](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview) that turns your own photo or video into a Loopscape style: LED dots, halftone, dither, duotone or pixel art, as a 1920×1080 video that loops without a jump. Ask Claude something like *"make this photo into a Loopscape wallpaper"*. It shows you a few looks, then makes the video and adds it to Loopscape's tray menu (right-click → *Change wallpaper*).
+
+- **Claude Code** (or the Code tab of the Claude desktop app): copy the `skills\loopscape-style` folder to `%USERPROFILE%\.claude\skills\`. Claude installs what it needs (Python's Pillow and NumPy, and FFmpeg) if they're missing.
+- **Claude.ai**: zip the folder and add it under Settings → Capabilities → Skills. It runs in the cloud, so Claude hands you the video and a picture of it to put in `%USERPROFILE%\Loopscape\styles` yourself.
+
+Your own styles aren't part of *Rotate day/night*; pick them from the tray menu. The dot effects come from [dotfx](https://github.com/thibaud360/dotfx) by Thibaud Francony (MIT license), included in the skill.
+
 ## What it changes on your PC
 
 | What | Where | Removed by uninstall |
@@ -82,6 +91,7 @@ Developer setup. Users don't need any of this.
 - `rainmeter/WeatherFetch.cs` and `rainmeter/WifiInfo.cs` are the helpers the skin calls.
 - `build/build.ps1` compiles everything with the C# compiler built into Windows (.NET Framework 4.x).
 - `build/stage.ps1` and `installer/Loopscape.iss` ([Inno Setup](https://jrsoftware.org/isinfo.php)) build the installer.
+- `skills/loopscape-style/` is the Claude skill for making your own styles (`make_style.py`, with dotfx's `dotfx.py`).
 - `sync.ps1` pushes your working copy to the running setup: it rebuilds what changed, copies the skin and restarts Loopscape.
 
 Rendering the videos needs [FFmpeg](https://ffmpeg.org/) with libx265, libsvtav1 and libvmaf (`winget install Gyan.FFmpeg`, the full build). The loop goes to `%USERPROFILE%\Loopscape`; each style is rendered once and encoded as H.264, HEVC and AV1 into `build\videos`:
