@@ -32,16 +32,28 @@ Each style is a 1080p video that loops without a visible jump.
 
 *The shore loop (40 seconds, shown here at 5× speed).*
 
-![All styles](screenshots/gallery.jpg)
+### Day styles
 
 | | | |
 |---|---|---|
-| ![Pixel clouds](screenshots/pixelclouds.jpg) **Pixel clouds** | ![Shore](screenshots/shore.jpg) **Shore** | ![Sunset strata](screenshots/sunset.jpg) **Sunset strata** |
-| ![Blue sky](screenshots/bluesky.jpg) **Blue sky** | ![Halftone](screenshots/halftone.jpg) **Halftone** | ![Aurora](screenshots/aurora.jpg) **Aurora** |
-| ![Nebula](screenshots/nebula.jpg) **Nebula** | ![Halftone moon](screenshots/moon.jpg) **Halftone moon** | ![Riso waves](screenshots/riso.jpg) **Riso waves** |
+| ![Spectrum](screenshots/spectrum.jpg) **Spectrum** | ![Halftone](screenshots/halftone.jpg) **Halftone** | ![Blue sky](screenshots/bluesky.jpg) **Blue sky** |
+| ![Pixel clouds](screenshots/pixelclouds.jpg) **Pixel clouds** | ![Sunset strata](screenshots/sunset.jpg) **Sunset strata** | ![Riso waves](screenshots/riso.jpg) **Riso waves** |
+| ![Dunes](screenshots/dunes.jpg) **Dunes** | ![Lake](screenshots/lake.jpg) **Lake** | ![Pastel aurora](screenshots/pastel.jpg) **Pastel aurora** |
+| ![CRT test card](screenshots/crt.jpg) **CRT test card** | ![Shore](screenshots/shore.jpg) **Shore** |  |
 
-Day styles: Spectrum, Halftone, Blue sky, Pixel clouds, Sunset strata, Riso waves, Dunes, Lake, Pastel aurora, CRT test card, Shore and Gradient.
-Night styles: Night clouds, Aurora, Nebula, Halftone moon, Embers, Deep sea, Rainy window and Bouncing logo.
+Gradient is also a day style.
+
+### Night styles
+
+Dark styles rotate in at night.
+
+| | | |
+|---|---|---|
+| ![Night clouds](screenshots/nightclouds.jpg) **Night clouds** | ![Aurora](screenshots/aurora.jpg) **Aurora** | ![Nebula](screenshots/nebula.jpg) **Nebula** |
+| ![Halftone moon](screenshots/moon.jpg) **Halftone moon** | ![Embers](screenshots/embers.jpg) **Embers** | ![Deep sea](screenshots/deepsea.jpg) **Deep sea** |
+| ![Rainy window](screenshots/rain.jpg) **Rainy window** |  |  |
+
+Bouncing logo is also a night style.
 
 ## Widgets
 
