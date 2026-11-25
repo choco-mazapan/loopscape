@@ -41,6 +41,7 @@ Four styles come with the installer (riso, shore, pixel clouds, aurora). On the 
 - **Skip to the next style:** Win+Alt+N.
 - **Start with Windows:** a checkbox in the tray menu (also in Task Manager → Startup apps).
 - **Video format:** the tray menu's *Video format*. *Automatic* picks the smallest format your graphics chip plays (AV1, then HEVC, then H.264), so the CPU stays idle. On a desktop where battery doesn't matter you can pick AV1 for smaller files even if the CPU has to decode it. Changing it downloads your styles again in that format. Styles that don't look as good in a format are only published in H.264.
+- **Big screens:** the styles are 1080p videos scaled up to fit your screen. On 4K screens the square-pixel styles use sharp 2× scaling, so they look as crisp as on a 1080p screen (`sharpScaling` in Loopscape.ini).
 - **Weather location:** Settings panel → Widgets → City.
 - **Advanced settings:** `%USERPROFILE%\Loopscape\Loopscape.ini` (commented; changes apply by themselves).
 

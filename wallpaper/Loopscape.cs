@@ -246,7 +246,8 @@ static class Loopscape
                       " --media-controls=no" +   // keep the wallpaper out of Windows' media flyout (SMTC)
                       " --input-ipc-server=\\\\.\\pipe\\" + PipeName;
         if (startOnWallpaper) args += " \"--vf=" + BlendFilter(1) + "\"";
-        args += " " + Get("mpvArgs", "") + " \"" + video + "\"";
+        args += " " + Get("mpvArgs", "");
+        args += SharpScaling(video) ? " --{ --scale=nearest \"" + video + "\" --}" : " \"" + video + "\"";
         var psi = new ProcessStartInfo(FindMpv(), args);
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
@@ -256,6 +257,26 @@ static class Loopscape
         LastPaused = null;
         Log("started mpv pid=" + Mpv.Id + " host=" + host + (startOnWallpaper ? " (fade in)" : ""));
     }
+
+    // Sharp upscaling: on a screen that is an exact multiple of the 1920x1080 style videos (4K = 2x), styles made of
+    // square cells look the same as a native render when every pixel just becomes a 2x2 block, while mpv's usual
+    // smooth scaler would soften them. Styles with round, anti-aliased dots (riso, halftone, moon, rain, nebula; see
+    // Frame in styles\Render.cs) keep the smooth scaler: nearest would make their edges jagged. Other videos (the
+    // shore loop, your own files) are unchanged. sharpScaling=false in Loopscape.ini turns it off.
+    static readonly HashSet<string> SquareCellStyles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+        "spectrum", "bluesky", "pixelclouds", "nightclouds", "aurora", "sunset", "dunes", "shore", "lake", "pastel",
+        "crt", "embers", "deepsea", "bounce" };
+    static bool SharpScaling(string video)
+    {
+        if (string.IsNullOrEmpty(video) || !GetBool("sharpScaling", true)) return false;
+        string dir = Path.GetDirectoryName(Path.GetFullPath(video));
+        if (!string.Equals(dir, Path.GetFullPath(Path.Combine(Dir, "styles")), StringComparison.OrdinalIgnoreCase)) return false;
+        if (!SquareCellStyles.Contains(StyleName(video))) return false;
+        int w = GetSystemMetrics(0), h = GetSystemMetrics(1);
+        return w >= 3840 && w % 1920 == 0 && h % 1080 == 0 && w / 1920 == h / 1080;
+    }
+    // loadfile options for a video (mpv drops them again when the next file loads)
+    static string FileOptions(string video) { return SharpScaling(video) ? "scale=nearest" : ""; }
 
     // ---------------- Rotation ----------------
     static string playing;
@@ -643,6 +664,7 @@ static class Loopscape
                                "[in]hwdownload,format=nv12,scale=" + size + ",format=yuv420p[v];" +
                                "[s][v]blend=all_mode=normal:all_opacity=1:shortest=0:repeatlast=1[out]]";
                 string opt = "vf=%" + Encoding.UTF8.GetByteCount(graph) + "%" + graph;
+                if (FileOptions(next) != "") opt = FileOptions(next) + "," + opt;
                 if (Ok(Cmd("{\"command\":[\"loadfile\"," + Q(next) + ",\"replace\",-1," + Q(opt) + "]}")))
                 {
                     publishFadeMs = ms + 400;   // the ramp below starts ~0.4 s after this
@@ -682,7 +704,8 @@ static class Loopscape
                 pipe.Connect(500);
                 var w = new StreamWriter(pipe); w.AutoFlush = true;
                 var r = new StreamReader(pipe);
-                w.Write("{\"command\":[\"loadfile\"," + Q(file) + ",\"replace\"]}\n");
+                string opt = FileOptions(file);
+                w.Write("{\"command\":[\"loadfile\"," + Q(file) + ",\"replace\"" + (opt != "" ? ",-1," + Q(opt) : "") + "]}\n");
                 var sw = Stopwatch.StartNew();
                 var read = r.ReadLineAsync();
                 while (sw.ElapsedMilliseconds < timeoutMs)
