@@ -203,7 +203,7 @@ function Begin-Check {
 
 # ---- 2. show what's new and wait for Update ----
 function Show-Changes {
-  $progress.Visible = $false
+  $progress.Visible = $false; $status.Visible = $false
   $state.Branch = (Invoke-Git rev-parse --abbrev-ref HEAD).Out | Select-Object -First 1
   $state.Dirty  = @((Invoke-Git status --porcelain).Out | Where-Object { $_ })
   $here = Get-Version HEAD
@@ -294,7 +294,7 @@ function Finish-Update($proc) {
   $installed = @($out | Where-Object { $_ -match '^\s{2}\S' } | ForEach-Object { '    ' + $_.Trim() })
   if ($installed.Count -gt 0) { $text += "`n`nUpdated on this PC:`n" + ($installed -join "`n") }
   else { $text += "`n`nNothing on this PC needed to change." }
-  Show-Result "Loopscape is updated" ($text + (& $stashNote)) $false
+  Show-Result $(if ($DryRun) { 'Dry run finished' } else { 'Loopscape is updated' }) ($text + (& $stashNote)) $false
 }
 
 $primary.add_Click({
@@ -312,7 +312,10 @@ $timer.add_Tick({
     foreach ($l in $p.NewOut) {
       if ($l -match '^progress (\d+) (.*)$') {
         $percent = [int]$Matches[1]
-        $progress.Value = [Math]::Min(100, 20 + $percent * 80 / 100)
+        # stepping back and forth skips the bar's animation, so it shows the new value at once
+        $v = [int][Math]::Min(100, 20 + $percent * 80 / 100)
+        if ($v -lt 100) { $progress.Value = $v + 1 }
+        $progress.Value = $v
         $status.Text = if ($percent -ge 100) { $Matches[2] } else { "$($Matches[2])$ellipsis" }
         if ($percent -eq 60) { Save-Screenshot 'progress' }
       }
