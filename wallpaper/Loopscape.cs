@@ -59,9 +59,26 @@ static class Loopscape
     static bool IsTrue(string v) { v = v.Trim().ToLowerInvariant(); return v == "true" || v == "1" || v == "yes"; }
     static int GetInt(string k, int d) { int v; return int.TryParse(Get(k, ""), out v) ? v : d; }
 
-    // The widgets' @Resources folder: Settings.inc (panel preferences), wallstyle.txt / wallstatus.txt (what we play),
-    // weathernow.txt (written by WeatherFetch.exe), wallnext.txt (touched to skip to the next style)
+    // The widgets' @Resources folder: Settings.inc (panel preferences)
     public static readonly string Res = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"Rainmeter\Skins\Loopscape\@Resources");
+    // Files shared with the widgets while we run, rewritten often: wallstyle.txt / wallstatus.txt (what we play),
+    // wallnext.txt (touched to skip to the next style), wallcmd.txt (widget buttons), bgtheme.txt, moveto.txt and
+    // lines-*.txt (adaptive text colour), weathernow.txt (written by WeatherFetch.exe). They live in %LOCALAPPDATA%,
+    // not in Documents, which OneDrive may sync: it would upload every change.
+    public static readonly string State = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Loopscape");
+    // Earlier versions kept those files in @Resources: delete the leftovers
+    static void RemoveOldStateFiles()
+    {
+        try
+        {
+            if (!Directory.Exists(Res)) return;
+            foreach (string n in new[] { "wallstyle.txt", "wallstatus.txt", "wallnext.txt", "wallcmd.txt", "bgtheme.txt", "moveto.txt",
+                                         "weathernow.txt", "weathercache.txt", "citylocation.txt", "lastlocation.txt", "snapdebug.txt" })
+                try { File.Delete(Path.Combine(Res, n)); } catch { }
+            foreach (string f in Directory.GetFiles(Res, "lines-*.txt")) try { File.Delete(f); } catch { }
+        }
+        catch { }
+    }
 
     // Settings panel keys (Settings.inc) that override Loopscape.ini keys when set
     static readonly string[][] PanelKeys = {
@@ -282,7 +299,7 @@ static class Loopscape
 
     // ---------------- Rotation ----------------
     static string playing;
-    // Setting Playing also tells the widgets which style is on screen (@Resources\wallstyle.txt), so they can move to
+    // Setting Playing also tells the widgets which style is on screen (State\wallstyle.txt), so they can move to
     // that style's recommended spot (Settings > Move widgets with wallpaper).
     static string Playing
     {
@@ -299,9 +316,8 @@ static class Loopscape
         {
             string name = string.IsNullOrEmpty(video) ? "" : Path.GetFileNameWithoutExtension(video).ToLowerInvariant();
             if (name == lastPublished) return;
-            string res = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), @"Rainmeter\Skins\Loopscape\@Resources");
-            if (!Directory.Exists(res)) return;
-            File.WriteAllText(Path.Combine(res, "wallstyle.txt"), name + "\nfade=" + Math.Max(0, fadeMs) + "\n");
+            if (!Directory.Exists(Res)) return;   // no widgets
+            File.WriteAllText(Path.Combine(State, "wallstyle.txt"), name + "\nfade=" + Math.Max(0, fadeMs) + "\n");
             lastPublished = name;
             WidgetThemes.Push("PlaceNow()");   // widgets move (or start their fade) now, not on their next 1 s read
         }
@@ -342,7 +358,7 @@ static class Loopscape
     static DateTime weatherStamp = DateTime.MinValue;
     static Dictionary<string, string> Weather()
     {
-        string f = Path.Combine(Res, "weathernow.txt");
+        string f = Path.Combine(State, "weathernow.txt");
         try
         {
             DateTime s = File.Exists(f) ? File.GetLastWriteTimeUtc(f) : DateTime.MinValue;
@@ -526,7 +542,7 @@ static class Loopscape
         catch (Exception e) { Log("could not update " + path + ": " + e.Message); }
     }
 
-    // @Resources\wallstatus.txt for the Settings panel's "Playing now"
+    // State\wallstatus.txt for the Settings panel's "Playing now"
     static string lastStatus;
     static void PublishStatus(bool battery, string onBattery, bool covered)
     {
@@ -547,7 +563,7 @@ static class Loopscape
                           "\r\nname=" + (style == "loop" ? "Gradient" : Pretty(style)) + "\r\npaused=" + (userPaused ? "1" : "0") +
                           "\r\nrotating=" + (StyleList("rotate").Count > 0 ? "1" : "0") + "\r\nnextat=" + nextAt + "\r\n";
             if (text == lastStatus) return;
-            File.WriteAllText(Path.Combine(Res, "wallstatus.txt"), text);
+            File.WriteAllText(Path.Combine(State, "wallstatus.txt"), text);
             lastStatus = text;
         }
         catch { }
@@ -585,15 +601,15 @@ static class Loopscape
     }
     static DateTime NextFileStamp()
     {
-        try { string f = Path.Combine(Res, "wallnext.txt"); return File.Exists(f) ? File.GetLastWriteTimeUtc(f) : DateTime.MinValue; }
+        try { string f = Path.Combine(State, "wallnext.txt"); return File.Exists(f) ? File.GetLastWriteTimeUtc(f) : DateTime.MinValue; }
         catch { return DateTime.MinValue; }
     }
 
-    // ----- commands from the widgets (Now Showing's buttons): @Resources\wallcmd.txt, one per line, appended by the
+    // ----- commands from the widgets (Now Showing's buttons): State\wallcmd.txt, one per line, appended by the
     // widget and deleted once read: next, prev, pause, play, pick <style|rotate>. Pausing (also from the tray) freezes
     // the video until play is pressed or Loopscape restarts; the rotation still moves on, as a frozen frame.
     static volatile bool userPaused, wake;
-    static string CmdFile { get { return Path.Combine(Res, "wallcmd.txt"); } }
+    static string CmdFile { get { return Path.Combine(State, "wallcmd.txt"); } }
     static bool CommandsWaiting() { try { return File.Exists(CmdFile); } catch { return false; } }
     // Runs the queued commands; true if one may have changed the style
     static bool RunCommands()
@@ -1362,6 +1378,8 @@ static class Loopscape
             if (!created) return; // already running
             SetProcessDPIAware();
             try { Directory.CreateDirectory(Path.Combine(Dir, "styles")); } catch { }
+            try { Directory.CreateDirectory(State); } catch { }
+            RemoveOldStateFiles();
             QuitStrayMpv();
             AppDomain.CurrentDomain.ProcessExit += delegate { StopMpv(); };
             var quitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, QuitEventName);
@@ -1414,7 +1432,7 @@ static class Loopscape
                         Log("settings reloaded");
                         StyleDownloads.CheckFormats();
                     }
-                    // Skip to the next style (hotkey, or @Resources\wallnext.txt touched by a widget / the panel)
+                    // Skip to the next style (hotkey, or State\wallnext.txt touched by a widget / the panel)
                     DateTime ns = NextFileStamp();
                     if (nextRequested || ns != nextStamp)
                     {
@@ -1873,7 +1891,7 @@ static class Loopscape
 }
 
 // Adaptive text colour for the Loopscape Rainmeter widgets (Settings > Adaptive text colour).
-// Samples the wallpaper just outside each widget and writes Documents\Rainmeter\Skins\Loopscape\@Resources\bgtheme.txt:
+// Samples the wallpaper just outside each widget and writes %LOCALAPPDATA%\Loopscape\bgtheme.txt:
 //   mode=<mode>
 //   W|<config>|text=R,G,B|pill=R,G,B,A|shadow=R,G,B,A                 colours for the whole widget
 //   L|<config>|<meter>|text=...|pill=...|shadow=...                  per-line colours (mode "perline")
@@ -2176,7 +2194,7 @@ static class WidgetThemes
     {
         w = h = 0;
         var o = new List<KeyValuePair<string, double[]>>();
-        string f = Path.Combine(Res, "lines-" + cfg.Replace('\\', '_') + ".txt");
+        string f = Path.Combine(Loopscape.State, "lines-" + cfg.Replace('\\', '_') + ".txt");
         if (!File.Exists(f)) return o;
         foreach (string line in File.ReadAllLines(f))
         {
@@ -2299,14 +2317,14 @@ static class WidgetThemes
         string text = sb.ToString();
         if (text != lastWritten)
         {
-            File.WriteAllText(Path.Combine(Res, "bgtheme.txt"), text);
+            File.WriteAllText(Path.Combine(Loopscape.State, "bgtheme.txt"), text);
             lastWritten = text;
             if (Bursting && active) Push("ThemeNow()", widgetCfgs);
         }
         return fast && active ? 1000 : 3000;
     }
 
-    // @Resources\moveto.txt ("<config> <x> <y>" per line), written by snap.lua just before a wallpaper move and
+    // State\moveto.txt ("<config> <x> <y>" per line), written by snap.lua just before a wallpaper move and
     // removed once it has moved; ignored when older than 3 s (a widget that never got its answer moved anyway)
     // Values: { physical x, physical y, Rainmeter x, Rainmeter y }. Rainmeter's coordinates are DPI-scaled; the first
     // line "screen <x> <y> <w> <h>" (Rainmeter's SCREENAREA, primary screen) gives the scale.
@@ -2315,7 +2333,7 @@ static class WidgetThemes
         var d = new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            string f = Path.Combine(Res, "moveto.txt");
+            string f = Path.Combine(Loopscape.State, "moveto.txt");
             if (!File.Exists(f) || (DateTime.UtcNow - File.GetLastWriteTimeUtc(f)).TotalSeconds > 3) return d;
             double scale = 1;
             foreach (string line in File.ReadAllLines(f))

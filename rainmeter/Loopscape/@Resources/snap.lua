@@ -16,6 +16,10 @@
 -- a drag starting), 33 ms while it is being dragged, and 16 ms while it glides into its spot after a drop.
 -- The faster rates only run while something is moving, so idle CPU use stays the same.
 
+-- Files shared with Loopscape.exe while it runs (what it plays, commands, colours) live in %LOCALAPPDATA%\Loopscape,
+-- outside Documents, which OneDrive may sync. Loopscape.exe creates the folder.
+local STATE = (os.getenv('LOCALAPPDATA') or ((os.getenv('USERPROFILE') or '') .. '\\AppData\\Local')) .. '\\Loopscape\\'
+
 local STILL_TICKS = 2      -- ticks a parked widget waits before re-aligning to its spot (PeerChanged, Resnap)
 local DROP_SECS = 0.16     -- how long a dragged widget must sit still to count as dropped
 local GLIDE_SECS = 0.15    -- how long the widget takes to slide from where it was dropped into its spot
@@ -66,7 +70,7 @@ local function size()
 end
 local function dbg(msg)
   if SKIN:GetVariable('SnapDebug', '0') ~= '1' then return end
-  local f = io.open(SKIN:GetVariable('@') .. 'snapdebug.txt', 'a')
+  local f = io.open(STATE .. 'snapdebug.txt', 'a')
   if f then f:write(os.date('%H:%M:%S ') .. (me or '?') .. ' ' .. msg .. '\n'); f:close() end
 end
 local function num(name, default)
@@ -597,7 +601,7 @@ function Update()
 end
 
 -- ---------- move with the wallpaper (Settings: "Move widgets with wallpaper", AutoPlace=1) ----------
--- Loopscape writes the style on screen to @Resources\wallstyle.txt. When it changes, each free-standing widget
+-- Loopscape writes the style on screen to %LOCALAPPDATA%\Loopscape\wallstyle.txt. When it changes, each free-standing widget
 -- (one not stacked on another) moves to that style's recommended screen spot, away from its busy/bright parts;
 -- stacked widgets follow the one they sit on. The first free widget (in SnapPeers order) gets the first spot.
 -- Spots: tl tc tr / ml mr / bl bc br
@@ -623,12 +627,12 @@ end
 local placedStyle, lastPlaceCheck = nil, -10
 
 -- Instant wallpaper switch: get the text colours for the new spot first, then move. We write where we (and any
--- widget stacked on us) are going to @Resources\moveto.txt; Loopscape samples the new wallpaper there and pushes
+-- widget stacked on us) are going to %LOCALAPPDATA%\Loopscape\moveto.txt; Loopscape samples the new wallpaper there and pushes
 -- ThemeNow() with entries tagged at=<x>,<y>. checkTheme applies such an entry, then calls finishMove.
 -- If no answer comes (adaptive text off, Loopscape busy) we move anyway after MOVE_WAIT seconds.
 local pendingMove = nil   -- { x, y, deadline }
 local MOVE_WAIT = 0.6
-local function moveFile() return SKIN:GetVariable('@') .. 'moveto.txt' end
+local function moveFile() return STATE .. 'moveto.txt' end
 
 -- Tell Loopscape where we (and widgets stacked on us) are going; false if adaptive text is off or the file failed
 function writeMoveFile(tx, ty)
@@ -686,7 +690,7 @@ function checkPlacement()   -- global: Update (above) calls it
   local now = os.clock()
   if now - lastPlaceCheck < 1 then return end
   lastPlaceCheck = now
-  local f = io.open(SKIN:GetVariable('@') .. 'wallstyle.txt', 'r')
+  local f = io.open(STATE .. 'wallstyle.txt', 'r')
   if not f then return end
   local style = (f:read('*l') or ''):match('^%s*(.-)%s*$')
   local fadeMs = tonumber(((f:read('*l') or ''):match('^fade=(%d+)'))) or 0
@@ -780,7 +784,7 @@ function stepWallFade()   -- global: Update (above) calls it
 end
 
 -- ---------- adaptive text colour ----------
--- Loopscape samples the wallpaper around each widget and writes @Resources\bgtheme.txt (see Loopscape.cs, WidgetThemes):
+-- Loopscape samples the wallpaper around each widget and writes %LOCALAPPDATA%\Loopscape\bgtheme.txt (see Loopscape.cs, WidgetThemes):
 --   mode=<off|contrast|smooth|tinted|smoothtinted|perline>
 --   W|<config>|text=R,G,B|pill=R,G,B,A|shadow=R,G,B,A          whole widget
 --   L|<config>|<meter>|text=...|pill=...|shadow=...             per line (perline mode)
@@ -917,7 +921,7 @@ end
 
 local function readTheme()
   local set, mode = {}, 'off'
-  local f = io.open(SKIN:GetVariable('@') .. 'bgtheme.txt', 'r')
+  local f = io.open(STATE .. 'bgtheme.txt', 'r')
   if not f then return mode, set end
   for line in f:lines() do
     local m = line:match('^mode=(%a+)')
@@ -964,7 +968,7 @@ function writeLines()
   local text = table.concat(out, '\n') .. '\n'
   if text == lastLinesText then return end
   lastLinesText = text
-  local f = io.open(SKIN:GetVariable('@') .. 'lines-' .. me:gsub('\\', '_') .. '.txt', 'w')
+  local f = io.open(STATE .. 'lines-' .. me:gsub('\\', '_') .. '.txt', 'w')
   if f then f:write(text); f:close() end
 end
 
@@ -1075,9 +1079,9 @@ function ViewMenu(mx, my)
   SKIN:Bang('!CommandMeasure', 'MeasureMenu', 'Build()', VIEW_MENU)
 end
 
--- Context menu: "Next wallpaper" (Loopscape watches @Resources\wallnext.txt and skips to the next style)
+-- Context menu: "Next wallpaper" (Loopscape watches %LOCALAPPDATA%\Loopscape\wallnext.txt and skips to the next style)
 function NextWallpaper()
-  local f = io.open(SKIN:GetVariable('@') .. 'wallnext.txt', 'w')
+  local f = io.open(STATE .. 'wallnext.txt', 'w')
   if f then f:write(os.time(), ' ', os.clock(), '\n'); f:close() end
 end
 

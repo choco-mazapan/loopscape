@@ -69,6 +69,7 @@ Your own styles aren't part of *Rotate day/night*; pick them from the tray menu.
 |---|---|---|
 | The program (Loopscape, mpv video player, list of downloadable styles) | `%LOCALAPPDATA%\Programs\Loopscape` | yes |
 | Videos, stills, Loopscape.ini, log | `%USERPROFILE%\Loopscape` | if you choose to |
+| Status files Loopscape and the widgets share while they run, weather cache | `%LOCALAPPDATA%\Loopscape` | yes |
 | The widgets | `Documents\Rainmeter\Skins\Loopscape` | yes (your settings only if you choose to) |
 | Start with Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` → `Loopscape` | yes |
 | Apps list entry | Settings → Apps → Installed apps | yes |

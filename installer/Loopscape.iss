@@ -386,6 +386,8 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep <> usPostUninstall then Exit;
+  // what Loopscape and the widgets share while they run (%LOCALAPPDATA%\Loopscape): nothing to keep
+  DelTree(ExpandConstant('{localappdata}\Loopscape'), True, True, True);
   if SuppressibleMsgBox('Also delete your wallpaper videos and widget settings?' + #13#10 + #13#10 +
        ExpandConstant('{%USERPROFILE}\Loopscape') + #13#10 + ExpandConstant('{userdocs}\Rainmeter\Skins\Loopscape') + #13#10 + #13#10 +
        'Choose No to keep them for a later reinstall.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES then

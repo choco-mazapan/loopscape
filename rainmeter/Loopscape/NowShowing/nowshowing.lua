@@ -1,12 +1,16 @@
--- Now Showing widget: shows what Loopscape is playing (@Resources\wallstatus.txt) and sends the buttons' commands
--- (@Resources\wallcmd.txt, one per line: next, prev, pause, play, pick <style|rotate>).
+-- Now Showing widget: shows what Loopscape is playing (%LOCALAPPDATA%\Loopscape\wallstatus.txt) and sends the buttons' commands
+-- (%LOCALAPPDATA%\Loopscape\wallcmd.txt, one per line: next, prev, pause, play, pick <style|rotate>).
 --
 -- wallstatus.txt (written by Loopscape when something changes):
 --   style=<file name>  name=<display name>  reason=Day rotation|Night rotation|Rotation|Weather: rain|One style|...
 --   next=HH:mm[ (sunset)]  nextat=<Unix time of the next change, 0 = none>  rotating=0|1  paused=0|1
 --   state=<paused / on battery / downloading ..., or empty>
 
-local RES, STYLES
+-- Files shared with Loopscape.exe while it runs (what it plays, commands, colours) live in %LOCALAPPDATA%\Loopscape,
+-- outside Documents, which OneDrive may sync. Loopscape.exe creates the folder.
+local STATE = (os.getenv('LOCALAPPDATA') or ((os.getenv('USERPROFILE') or '') .. '\\AppData\\Local')) .. '\\Loopscape\\'
+
+local STYLES
 local status = {}
 local shown = {}      -- option/variable values already sent, so a tick that changes nothing costs no bangs
 local dirty = false
@@ -16,12 +20,11 @@ local DOT = '  [\\x00B7]  '
 local GLYPH = { prev = '[\\xE892]', next = '[\\xE893]', play = '[\\xE768]', pause = '[\\xE769]', pin = '[\\xE718]', unpin = '[\\xE77A]' }
 
 function Initialize()
-  RES = SKIN:GetVariable('@')
   STYLES = (os.getenv('USERPROFILE') or '') .. '\\Loopscape\\styles\\'
 end
 
 local function readStatus()
-  local f = io.open(RES .. 'wallstatus.txt', 'r')
+  local f = io.open(STATE .. 'wallstatus.txt', 'r')
   if not f then return {} end
   local t = {}
   for line in f:lines() do local k, v = line:match('^(%w+)=(.*)$'); if k then t[k] = v end end
@@ -108,7 +111,7 @@ end
 
 -- ---------- buttons ----------
 function Cmd(c)
-  local f = io.open(RES .. 'wallcmd.txt', 'a')
+  local f = io.open(STATE .. 'wallcmd.txt', 'a')
   if not f then return end
   f:write(c, '\n')
   f:close()
