@@ -1,8 +1,8 @@
--- Shared by the LaptopInfo widgets (via @Resources\Snap.inc).
+-- Shared by the Loopscape widgets (via @Resources\Snap.inc).
 --
 -- Snapping: after a widget is dragged and dropped it moves to the nearest free target:
 --   * the 8 screen spots (corners, top/bottom centre, left/right middle); bottom spots leave room for the taskbar.
---     A spot that would overlap another LaptopInfo widget is not offered.
+--     A spot that would overlap another Loopscape widget is not offered.
 --   * stack spots directly above / below each other widget, aligned to its left edge, right edge or centre
 --     depending on which side of the screen it sits.
 -- Stacking: a widget dropped on a stack spot stays attached to the widget it sits on. If that widget moves or
@@ -10,25 +10,43 @@
 --
 -- Widgets share their position through variables: each one writes "x,y,w,h" into Peer_<name> of the others.
 -- Rainmeter has no "drag finished" event, so a drop is detected as "position unchanged for a couple of ticks".
--- While dragging, the LaptopInfo\SnapGuides skin shows dashed outlines of all targets with the chosen one tinted.
+-- While dragging, the Loopscape\SnapGuides skin shows dashed outlines of all targets with the chosen one tinted.
 
 local STILL_TICKS = 2      -- ticks (x UpdateMs, 100 ms) the widget must sit still before snapping
-local GUIDES = 'LaptopInfo\\SnapGuides'
+local GUIDES = 'Loopscape\\SnapGuides'
 local MAX_GUIDES = 12
 
 local me, peers = nil, {}
 local lastX, lastY, lastW, lastH = nil, nil, nil, nil
 local still, dragging, enabled = 0, false, true
 local targets, target = {}, nil
-local attach = nil          -- { peer = 'LaptopInfo\\Clock', rel = 'above'|'below' }
+local attach = nil          -- { peer = 'Loopscape\\Clock', rel = 'above'|'below' }
+local recheck = nil         -- checking which widgets are still there (see PeerGone)
+local ringTicks = 0         -- ticks we've been part of a ring of stacked widgets
 
 -- ---------- helpers ----------
+-- Loading: for the first seconds after a widget loads its panel is smaller than it will be (the clock's weather and
+-- forecast, the Wi-Fi details arrive a moment later). Widgets stacked on it would follow it in, then out again, and
+-- a widget on a bottom or right spot would itself move twice. So until the content is in we report the size it had
+-- last time (SnapSize, saved in the skin's own ini whenever it changes noticeably).
+local SETTLE = 5                       -- seconds at most
+local savedW, savedH = 0, 0            -- SnapSize as saved
+local settleUntil = 0                  -- os.clock() when loading is over at the latest (0: not loading)
+
 -- The widget's visible size is its panel. (The window can be larger: Rainmeter still counts the positions of
 -- hidden meters when sizing it, so the window is not a reliable size in the smaller views.)
-local function size()
+local function rawSize()
   local p = SKIN:GetMeter('MeterPanel')
   if p and p:GetW() > 1 and p:GetH() > 1 then return p:GetW(), p:GetH() end
   return SKIN:GetW(), SKIN:GetH()
+end
+local function size()
+  local w, h = rawSize()
+  if settleUntil > 0 then
+    if h >= savedH or os.clock() > settleUntil then settleUntil = 0   -- the content is in (or it's smaller now)
+    else return math.max(w, savedW), savedH end
+  end
+  return w, h
 end
 local function dbg(msg)
   if SKIN:GetVariable('SnapDebug', '0') ~= '1' then return end
@@ -44,17 +62,38 @@ local function screen()
   return num('SCREENAREAX', 0), num('SCREENAREAY', 0), num('SCREENAREAWIDTH', 1920), num('SCREENAREAHEIGHT', 1080)
 end
 
--- Other widgets' rectangles as last broadcast: { name = {x,y,w,h} }
+-- Other widgets' rectangles as last broadcast: { name = {x,y,w,h,attachedTo,naturalWidth} }
 local function peerRects(includeFollowers)
-  local out = {}
+  local out, all = {}, {}
   for _, p in ipairs(peers) do
     local s = SKIN:GetVariable('Peer_' .. key(p), '')
     -- "x,y,w,h,attachedTo,naturalWidth"
     local x, y, w, h, att, nat = s:match('^(-?%d+),(-?%d+),(%d+),(%d+),?([^,]*),?(%d*)$')
-    -- widgets stacked on us follow us, so they are not obstacles (unless includeFollowers)
-    if x and (includeFollowers or att ~= me) then out[p] = { tonumber(x), tonumber(y), tonumber(w), tonumber(h), att, tonumber(nat) } end
+    local r = x and { tonumber(x), tonumber(y), tonumber(w), tonumber(h), att, tonumber(nat) }
+    -- while checking who's still there, a widget that hasn't answered yet counts as where it was
+    if not r and recheck and recheck.old then r = recheck.old[p] end
+    if r then all[p] = r end
+  end
+  -- widgets stacked on us, directly or on one that is, follow us: they are not obstacles or targets (unless
+  -- includeFollowers). Stacking on one of them would make a ring that follows itself forever.
+  for p, r in pairs(all) do
+    local q, n = r[5], 0
+    while q and q ~= '' and q ~= me and all[q] and n < 8 do q, n = all[q][5], n + 1 end
+    if includeFollowers or q ~= me then out[p] = r end
   end
   return out
+end
+
+-- true if following the stack from peer p leads back to us (p sits on us, directly or not); also returns the
+-- widgets on the way
+local function followsMe(p)
+  local rects, n, path = peerRects(true), 0, {}
+  while p and p ~= '' and n < 8 do
+    if p == me then return true, path end
+    path[#path + 1] = p
+    p, n = rects[p] and rects[p][5], n + 1
+  end
+  return false
 end
 
 local function overlaps(ax, ay, aw, ah, r)
@@ -165,11 +204,17 @@ function Broadcast(bx, by)
   dbg('broadcast ' .. tostring(bx) .. ',' .. tostring(by))
   lastNat = naturalWidth()
   local w, h = size()
+  -- remember the size for the next load (the height exactly; the width changes with the clock's digits, so only
+  -- a bigger change is worth a write)
+  if settleUntil == 0 and (h ~= savedH or math.abs(w - savedW) > 24) then
+    savedW, savedH = w, h
+    SKIN:Bang('!WriteKeyValue', 'Variables', 'SnapSize', w .. ',' .. h)
+  end
   local s = string.format('%d,%d,%d,%d,%s,%d', bx or SKIN:GetX(), by or SKIN:GetY(), w, h, attach and attach.peer or '', lastNat)
   for _, p in ipairs(peers) do
     SKIN:Bang('!SetVariable', 'Peer_' .. key(me), s, p)
     -- let the other widget follow/match now rather than on its next tick
-    SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'PeerChanged()', p)
+    SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'PeerChanged("' .. me:gsub('\\', '\\\\') .. '")', p)
   end
 end
 
@@ -177,11 +222,47 @@ local function saveAttach()
   SKIN:Bang('!WriteKeyValue', 'Variables', 'SnapAttach', attach and (attach.peer .. '|' .. attach.rel) or '')
 end
 
+-- ---------- widgets closing ----------
+-- A widget that closes (hidden from Settings, unloaded, or refreshing) runs SnapOnClose (Snap.inc), which calls
+-- PeerGone() here. Its Peer_ variable would otherwise stay behind: widgets stacked on it would keep following a widget
+-- that isn't there, and its empty spot would still block snap targets. So on the next tick (when the closing widget
+-- is really gone) we clear all Peer_ variables and ask everyone to share their position again; whoever hasn't
+-- after GONE_WAIT seconds is gone (a refreshing widget is back well within that). The answers are checked through
+-- the variables: a peer's PeerChanged call can arrive while our script is still running, and is then dropped.
+local GONE_WAIT = 1.5
+local gone = {}       -- last rect of each widget that closed: a widget stacked on it takes its place
+
+function PeerGone()
+  if not recheck then recheck = {} end
+end
+
+local function checkGone()
+  if not recheck then return end
+  if not recheck.old then
+    recheck.old = peerRects(true)
+    recheck.at = os.clock()
+    for _, p in ipairs(peers) do SKIN:Bang('!SetVariable', 'Peer_' .. key(p), '') end
+    for _, p in ipairs(peers) do SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Broadcast()', p) end
+    return
+  end
+  if os.clock() - recheck.at < GONE_WAIT then return end
+  local old = recheck.old
+  recheck = nil
+  local rects = peerRects(true)
+  for p, r in pairs(old) do
+    if not rects[p] then dbg(p .. ' closed'); gone[p] = r; still = math.max(still, STILL_TICKS) end
+  end
+end
+
 -- Called by a peer right after it shared a new position/size: react immediately
-function PeerChanged()
-  if dragging then return end
+local inPeerChanged = false
+function PeerChanged(from)
+  if from then gone[from] = nil end
+  if dragging or inPeerChanged then return end   -- (no chain reaction back into us: the next tick catches up)
+  inPeerChanged = true
   still = math.max(still, STILL_TICKS)
   Update()
+  inPeerChanged = false
 end
 
 -- Called by the Settings panel after a margin changed: re-snap to the nearest spot as if just parked.
@@ -238,8 +319,38 @@ local function hideGuides()
   target = nil
 end
 
+-- Where we go when the widget we're stacked on (last at rect g) has closed: into its place, keeping the edge
+-- that faced it (stacked below it: our top where its top was; above it: our bottom where its bottom was)
+local function placeOf(g, rel, w, h)
+  local sx, _, sw, _ = screen()
+  local cx = g[1] + g[3] / 2 - sx
+  local x
+  if cx < sw / 3 then x = g[1]
+  elseif cx > sw * 2 / 3 then x = g[1] + g[3] - w
+  else x = g[1] + math.floor((g[3] - w) / 2) end
+  return x, (rel == 'below') and g[2] or (g[2] + g[4] - h)
+end
+
+-- First shown widget (in SnapPeers order) that nothing is stacked on and that isn't stacked on us
+local loadedAt = 0
+function stackFallback()
+  local rects = peerRects(true)
+  for _, p in ipairs(peers) do
+    local r = rects[p]
+    if r and (attach == nil or p ~= attach.peer) and not followsMe(p) then
+      local taken = false
+      for q, r2 in pairs(rects) do if q ~= p and r2[5] == p then taken = true end end
+      if not taken then return p end
+    end
+  end
+  return nil
+end
+
 -- ---------- main ----------
 function Initialize()
+  loadedAt = os.clock()
+  local sw, sh = (SKIN:GetVariable('SnapSize', '')):match('^(%d+),(%d+)$')
+  if sw then savedW, savedH, settleUntil = tonumber(sw), tonumber(sh), loadedAt + SETTLE end
   me = SKIN:GetVariable('CURRENTCONFIG')
   for p in (SKIN:GetVariable('SnapPeers', '')):gmatch('[^|]+') do
     if p ~= me then peers[#peers + 1] = p end
@@ -257,6 +368,7 @@ end
 
 function Update()
   if viewPending then viewPending = false; applyView() end
+  checkGone()
   checkTheme()
   checkPendingMove()
   checkPlacement()
@@ -307,16 +419,59 @@ function Update()
   elseif attach then
     -- Stacked: follow the widget we sit on
     dbg('attached to ' .. attach.peer .. ' ' .. attach.rel .. ' peerVar=' .. SKIN:GetVariable('Peer_' .. key(attach.peer), '(none)'))
-    local r = peerRects(true)[attach.peer]
+    local rects = peerRects(true)
+    -- a ring (saved by an older version, or both dropped at once): the widget we sit on follows us, so we stand
+    -- free. Only once it has lasted a while: right after a widget loads, the others' stack info can be out of date.
+    -- The widget first in SnapPeers order lets go, and snaps to a free spot.
+    local ring, path = followsMe(attach.peer)
+    if ring then ringTicks = ringTicks + 1 else ringTicks = 0 end
+    if ringTicks > 20 then
+      ringTicks = 0
+      local first
+      for p in (SKIN:GetVariable('SnapPeers', '')):gmatch('[^|]+') do
+        if p == me then first = true; break end
+        for _, q in ipairs(path) do if q == p then first = false end end
+        if first == false then break end
+      end
+      if first then
+        dbg('ring via ' .. attach.peer .. ': detached'); attach = nil; saveAttach(); rects = {}
+        still = STILL_TICKS - 1
+      end
+    end
+    local r, own = attach and rects[attach.peer], true
+    -- The widget we sit on is hidden. attach (saved) stays as it is, so we go back once it's shown again.
+    local g = attach and not r and gone[attach.peer]
+    if g then
+      -- it closed while we followed it: sit on what it sat on, or take its place
+      if g[5] and g[5] ~= '' and g[5] ~= me and rects[g[5]] then r, own = rects[g[5]], false
+      else tx, ty = placeOf(g, attach.rel, w, h) end
+    elseif attach and not r and os.clock() - loadedAt > 3 then
+      -- not shown since we loaded: stack on another widget rather than stay where the skin was never placed
+      r, own = rects[stackFallback()], false
+    end
     if r then
-      tx, ty = stackPos(r, attach.rel, w, h)
-      -- No room on that side any more (e.g. it was dragged to the top edge): switch to the other side
+      -- No room on our side (e.g. it was dragged to the screen edge, or the widget it sits on flipped over to the
+      -- other side of its own one, which is now in our way): switch to the other side
       local sx, sy, sw, sh = screen()
-      if ty < sy + num('SnapMargin', 28) / 2 or ty + h > sy + sh - num('SnapBottomMargin', 76) then
+      local top, bottom = sy + num('SnapMargin', 28) / 2, sy + sh - num('SnapBottomMargin', 76)
+      local function fits(rel)
+        local x, y = stackPos(r, rel, w, h)
+        if y < top or y + h > bottom then return false, x, y end
+        for p2, r2 in pairs(rects) do
+          -- (stacked panels overlap a little on purpose when the tint is off: only a real collision counts)
+          if r2 ~= r and not followsMe(p2) and x < r2[1] + r2[3] - 4 and x + w > r2[1] + 4
+             and y < r2[2] + r2[4] - 40 and y + h > r2[2] + 40 then return false, x, y end
+        end
+        return true, x, y
+      end
+      local ok
+      ok, tx, ty = fits(attach.rel)
+      if not ok then
         local other = (attach.rel == 'above') and 'below' or 'above'
-        local ox, oy = stackPos(r, other, w, h)
-        if oy >= sy + num('SnapMargin', 28) / 2 and oy + h <= sy + sh - num('SnapBottomMargin', 76) then
-          tx, ty = ox, oy; attach.rel = other; saveAttach()
+        local ok2, ox, oy = fits(other)
+        if ok2 then
+          tx, ty = ox, oy
+          if own then attach.rel = other; saveAttach() end   -- not for a stand-in: that would change the real choice
         end
       end
     end
@@ -351,6 +506,18 @@ local STYLE_SPOTS = {
   nightclouds = { 'tl', 'tr' }, aurora = { 'bl', 'br' }, nebula = { 'tl', 'tr' }, moon = { 'tl', 'bl' },
   embers = { 'tl', 'tr' }, deepsea = { 'bl', 'bc' }, rain = { 'tl', 'tr' },
 }
+-- A third (or later) free widget takes the first of these that the style's own list doesn't use
+local SPARE_SPOTS = { 'tc', 'bc', 'tl', 'tr', 'bl', 'br', 'ml', 'mr' }
+local function spotFor(spots, rank)
+  if rank + 1 <= #spots then return spots[rank + 1] end
+  local n = rank + 1 - #spots
+  for _, s in ipairs(SPARE_SPOTS) do
+    local used = false
+    for _, u in ipairs(spots) do if u == s then used = true end end
+    if not used then n = n - 1; if n == 0 then return s end end
+  end
+  return spots[#spots]
+end
 local placedStyle, lastPlaceCheck = nil, -10
 
 -- Instant wallpaper switch: get the text colours for the new spot first, then move. We write where we (and any
@@ -435,8 +602,9 @@ function checkPlacement()   -- global: Update (above) calls it
     if r and (r[5] == nil or r[5] == '') then rank = rank + 1 end
   end
   local w, h = size()
-  local tx, ty = spotPos(spots[math.min(rank + 1, #spots)], w, h)
-  dbg('wallpaper ' .. style .. ' -> ' .. spots[math.min(rank + 1, #spots)] .. ' ' .. tx .. ',' .. ty .. ' fade ' .. fadeMs)
+  local spot = spotFor(spots, rank)
+  local tx, ty = spotPos(spot, w, h)
+  dbg('wallpaper ' .. style .. ' -> ' .. spot .. ' ' .. tx .. ',' .. ty .. ' fade ' .. fadeMs)
   if tx == SKIN:GetX() and ty == SKIN:GetY() then return end
   -- The wallpaper is crossfading (fadeMs since Loopscape wrote the file, minus up to a second until we read it):
   -- fade out with the old wallpaper, move while it blends, fade in over the new one. Widgets stacked on us join in.
@@ -517,16 +685,29 @@ end
 -- Each text meter gets the text colour with its role's opacity; icons are tinted; pills use PillFill_<meter>.
 -- In the smooth modes and per-line mode, colour changes fade over FADE seconds.
 local ROLES = {
-  ['LaptopInfo\\Clock'] = {
+  ['Loopscape\\Clock'] = {
     MeterTime = 'main', MeterAmPm = 'main', MeterWeatherTemp = 'main', MeterWeatherDesc = 'sub', MeterWeatherCity = 'city',
     MeterDate = 'sub', MeterBattery = 'battery', MeterWeatherIcon = 'icon',
     MeterFcDay1 = 'sub', MeterFcDay2 = 'sub', MeterFcDay3 = 'sub', MeterFcTemp1 = 'main', MeterFcTemp2 = 'main', MeterFcTemp3 = 'main',
     MeterFcIcon1 = 'icon', MeterFcIcon2 = 'icon', MeterFcIcon3 = 'icon' },
-  ['LaptopInfo\\WiFi'] = {
+  ['Loopscape\\WiFi'] = {
     MeterSSID = 'main', MeterQuality = 'sub', MeterIcon = 'icon', MeterTraffic = 'main', MeterTrafficUp = 'main',
     MeterL1 = 'label', MeterL2 = 'label', MeterL3 = 'label', MeterL4 = 'label', MeterL5 = 'label', MeterL6 = 'label', MeterL7 = 'label',
     MeterV1 = 'main', MeterV2 = 'main', MeterV3 = 'main', MeterV4 = 'main', MeterV5 = 'main', MeterV6 = 'main', MeterV7 = 'main' },
+  ['Loopscape\\NowShowing'] = {
+    MeterHead = 'label', MeterName = 'main', MeterInfo = 'sub',
+    MeterBtn1 = 'main', MeterBtn2 = 'main', MeterBtn3 = 'main', MeterBtn4 = 'main' },
+  ['Loopscape\\SunMoon'] = { MeterHead = 'label', MeterName = 'main', MeterInfo = 'sub', MeterMoon = 'sub' },
+  ['Loopscape\\Rain'] = {
+    MeterHead = 'label', MeterName = 'main', MeterInfo = 'sub', MeterT0 = 'label', MeterT1 = 'label', MeterT2 = 'label', MeterT3 = 'label' },
+  ['Loopscape\\System'] = {
+    MeterHead = 'label', MeterL1 = 'label', MeterL2 = 'label', MeterL3 = 'label', MeterV1 = 'main', MeterV2 = 'main', MeterV3 = 'main',
+    MeterLine = 'main' },
+  ['Loopscape\\Calendar'] = { MeterHead = 'main', MeterName = 'main', MeterInfo = 'sub' },
 }
+-- the calendar's weekday letters and 42 day cells
+for i = 1, 7 do ROLES['Loopscape\\Calendar']['MeterH' .. i] = 'label' end
+for i = 1, 42 do ROLES['Loopscape\\Calendar']['MeterD' .. i] = 'sub' end
 -- weather icons are colour-coded (see weather.lua / make-weather-icons.ps1) instead of tinted with the text
 WX_ICONS = { MeterWeatherIcon = true, MeterFcIcon1 = true, MeterFcIcon2 = true, MeterFcIcon3 = true }
 local ALPHA = { main = 255, sub = 225, label = 155, city = 205, battery = 225, icon = 255 }
@@ -742,7 +923,7 @@ function PlaceNow() lastPlaceCheck = -1; checkPlacement() end
 -- ---------- views ----------
 -- Each widget has numbered views (View=0 is the full view) named in ViewNames ("Full|Simple|..."). A meter in
 -- group V<n> has Hidden=(#View#>=n), so it is hidden from view n upwards; the panel size follows via #View# in its formulas.
-local VIEW_MENU = 'LaptopInfo\\ViewMenu'
+local VIEW_MENU = 'Loopscape\\ViewMenu'
 
 local function viewNames()
   local names = {}

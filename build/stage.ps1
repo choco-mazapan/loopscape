@@ -1,7 +1,7 @@
 # Gathers everything the installer contains into build\stage, then installer\Loopscape.iss packs it:
 #   stage\app\    -> %LOCALAPPDATA%\Programs\Loopscape   (Loopscape.exe, mpv\, styles.json, licenses)
 #   stage\data\   -> %USERPROFILE%\Loopscape               (Loopscape.ini, loop.mp4, all stills, the bundled videos)
-#   stage\skin\   -> Documents\Rainmeter\Skins\LaptopInfo      (the widgets, with WeatherFetch.exe / WifiInfo.exe)
+#   stage\skin\   -> Documents\Rainmeter\Skins\Loopscape      (the widgets, with WeatherFetch.exe / WifiInfo.exe)
 #   stage\redist\ -> Rainmeter's official installer (run only if the user ticks "Install Rainmeter")
 # Dev/CI only. Videos, loop.mp4 and stills.zip come from -StylesDir: build\styles-release (written by
 # build\make-styles-release.ps1), or the styles release downloaded by CI. The bundled styles are the -BundledFormat
@@ -60,11 +60,11 @@ foreach ($b in $Bundled) {
 }
 
 # ---- skin (tracked files only, so nothing from a dev setup leaks in) ----
-$skinSrc = Join-Path $root 'rainmeter\LaptopInfo'
-$tracked = @(git -C $root ls-files -- 'rainmeter/LaptopInfo')
+$skinSrc = Join-Path $root 'rainmeter\Loopscape'
+$tracked = @(git -C $root ls-files -- 'rainmeter/Loopscape')
 if ($LASTEXITCODE -ne 0 -or $tracked.Count -eq 0) { throw 'git ls-files failed' }
 foreach ($t in $tracked) {
-  $rel = $t.Substring('rainmeter/LaptopInfo/'.Length) -replace '/', '\'
+  $rel = $t.Substring('rainmeter/Loopscape/'.Length) -replace '/', '\'
   $dst = Join-Path $skin $rel
   New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
   Copy-Item (Join-Path $skinSrc $rel) $dst

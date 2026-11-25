@@ -1,8 +1,8 @@
 # Loopscape
 
-**Loopscape** is a live wallpaper for Windows 10 and 11. It plays looping animated landscapes (shores, pixel clouds, auroras, nebulas and more) behind your desktop icons, with dark styles at night. It comes with desktop widgets for the clock, battery, weather, Wi‑Fi and network, drawn by [Rainmeter](https://www.rainmeter.net/).
+**Loopscape** is a live wallpaper for Windows 10 and 11. It plays looping animated landscapes (shores, pixel clouds, auroras, nebulas and more) behind your desktop icons, with dark styles at night. It comes with desktop widgets for Rainmeter: a clock with battery and weather, Wi‑Fi and network details, a Now Showing card for the wallpaper itself, and optional Sun & Moon, Rain, System and Calendar widgets. They live in `Documents\Rainmeter\Skins\Loopscape`.
 
-![Riso style with the widgets](screenshots/riso.jpg)
+![Riso style with the Loopscape widgets](screenshots/riso.jpg)
 
 ## Screenshots
 
@@ -39,6 +39,13 @@ Four styles come with the installer (riso, shore, pixel clouds, aurora). On the 
 - **Pick a style:** click the tray icon for the widgets' Settings panel, or right-click it for the style menu.
 - **Rotate styles:** choose *Rotate day/night* in the Settings panel. It changes style every hour by default (*Change every* in the Rotation section), with dark styles at night.
 - **Skip to the next style:** Win+Alt+N.
+- **Now Showing widget:** shows the style on screen and when the rotation changes it, with buttons to go back, pause the animation, skip ahead or keep the current style. Hide it in Settings → Widgets.
+- **More widgets:** Settings → Widgets has a tile for each widget; click one to show or hide it. The extra ones start hidden:
+  - **Sun & Moon:** the sun's path across today's sky, the next sunrise or sunset, and the moon's phase.
+  - **Rain:** rain or snow in the next 3 hours, in 15-minute steps ("Rain in ~20 min").
+  - **System:** processor and memory use, and free space on drive C:.
+  - **Calendar:** this month with today ringed; scroll over it for other months. The week starts on the day set in Windows.
+- **Views:** middle-click a widget to switch between its full and simple views.
 - **Start with Windows:** a checkbox in the tray menu (also in Task Manager → Startup apps).
 - **Video format:** the tray menu's *Video format*. *Automatic* picks the smallest format your graphics chip plays (AV1, then HEVC, then H.264), so the CPU stays idle. On a desktop where battery doesn't matter you can pick AV1 for smaller files even if the CPU has to decode it. Changing it downloads your styles again in that format. Styles that don't look as good in a format are only published in H.264.
 - **Big screens:** the styles are 1080p videos scaled up to fit your screen. On 4K screens the square-pixel styles use sharp 2× scaling, so they look as crisp as on a 1080p screen (`sharpScaling` in Loopscape.ini).
@@ -51,7 +58,7 @@ Four styles come with the installer (riso, shore, pixel clouds, aurora). On the 
 |---|---|---|
 | The program (Loopscape, mpv video player, list of downloadable styles) | `%LOCALAPPDATA%\Programs\Loopscape` | yes |
 | Videos, stills, Loopscape.ini, log | `%USERPROFILE%\Loopscape` | if you choose to |
-| The widgets | `Documents\Rainmeter\Skins\LaptopInfo` | yes (your settings only if you choose to) |
+| The widgets | `Documents\Rainmeter\Skins\Loopscape` | yes (your settings only if you choose to) |
 | Start with Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` → `Loopscape` | yes |
 | Apps list entry | Settings → Apps → Installed apps | yes |
 | Rainmeter (optional) | installed by its official installer | no: uninstall it separately |
@@ -71,7 +78,7 @@ To uninstall, use Settings → Apps → Loopscape → Uninstall. It asks whether
 Developer setup. Users don't need any of this.
 
 - `wallpaper/` holds the Loopscape launcher (`Loopscape.cs`) and the video and still renderers (`make-loop.ps1`, `styles/`).
-- `rainmeter/LaptopInfo/` is the Rainmeter skin (Clock, WiFi, Settings, ViewMenu, SnapGuides).
+- `rainmeter/Loopscape/` is the Rainmeter skin (Clock, WiFi, NowShowing, SunMoon, Rain, System, Calendar, Settings, ViewMenu, SnapGuides). Versions before 1.1 installed it as `Skins\LaptopInfo`; the installer moves it.
 - `rainmeter/WeatherFetch.cs` and `rainmeter/WifiInfo.cs` are the helpers the skin calls.
 - `build/build.ps1` compiles everything with the C# compiler built into Windows (.NET Framework 4.x).
 - `build/stage.ps1` and `installer/Loopscape.iss` ([Inno Setup](https://jrsoftware.org/isinfo.php)) build the installer.
@@ -93,7 +100,7 @@ To make a release:
 3. Commit `installer\styles.json` and `installer\styles-SHA256SUMS.txt`.
 4. Push a `v*` tag. The [release workflow](.github/workflows/release.yml) builds the installer and makes a draft release.
 
-Fonts: Space Grotesk and Geist Pixel, bundled under their own licenses (see `rainmeter/LaptopInfo/@Resources/Fonts`).
+Fonts: Space Grotesk and Geist Pixel, bundled under their own licenses (see `rainmeter/Loopscape/@Resources/Fonts`).
 
 ## License
 

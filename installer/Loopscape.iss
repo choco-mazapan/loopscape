@@ -4,7 +4,7 @@
 ; What it changes (README "What it changes on your PC"):
 ;   %LOCALAPPDATA%\Programs\Loopscape     the program (Loopscape.exe, mpv, styles.json)
 ;   %USERPROFILE%\Loopscape                 videos, stills, Loopscape.ini (kept on upgrade)
-;   Documents\Rainmeter\Skins\LaptopInfo        the widgets (Settings.inc kept on upgrade)
+;   Documents\Rainmeter\Skins\Loopscape        the widgets (Settings.inc kept on upgrade)
 ;   HKCU\...\CurrentVersion\Run "Loopscape" only with "Start with Windows" (also a tray menu toggle)
 ;   Settings > Apps entry with an uninstaller
 
@@ -87,9 +87,9 @@ Source: "{#Stage}\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 Source: "{#Stage}\data\Loopscape.ini"; DestDir: "{%USERPROFILE}\Loopscape"; Flags: onlyifdoesntexist uninsneveruninstall
 Source: "{#Stage}\data\*"; Excludes: "Loopscape.ini"; DestDir: "{%USERPROFILE}\Loopscape"; Flags: ignoreversion recursesubdirs createallsubdirs uninsneveruninstall
 ; widgets: Settings.inc only if missing (it holds the user's choices); fonts only if missing (Rainmeter locks them)
-Source: "{#Stage}\skin\@Resources\Settings.inc"; DestDir: "{userdocs}\Rainmeter\Skins\LaptopInfo\@Resources"; Flags: onlyifdoesntexist uninsneveruninstall
-Source: "{#Stage}\skin\@Resources\Fonts\*"; DestDir: "{userdocs}\Rainmeter\Skins\LaptopInfo\@Resources\Fonts"; Flags: onlyifdoesntexist
-Source: "{#Stage}\skin\*"; Excludes: "\@Resources\Settings.inc,\@Resources\Fonts\*"; DestDir: "{userdocs}\Rainmeter\Skins\LaptopInfo"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#Stage}\skin\@Resources\Settings.inc"; DestDir: "{userdocs}\Rainmeter\Skins\Loopscape\@Resources"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: "{#Stage}\skin\@Resources\Fonts\*"; DestDir: "{userdocs}\Rainmeter\Skins\Loopscape\@Resources\Fonts"; Flags: onlyifdoesntexist
+Source: "{#Stage}\skin\*"; Excludes: "\@Resources\Settings.inc,\@Resources\Fonts\*"; DestDir: "{userdocs}\Rainmeter\Skins\Loopscape"; Flags: ignoreversion recursesubdirs createallsubdirs
 #ifexist Stage + "\redist\Rainmeter-setup.exe"
 Source: "{#Stage}\redist\Rainmeter-setup.exe"; Flags: dontcopy
 #endif
@@ -105,7 +105,7 @@ var
 
 function SettingsInc: String;
 begin
-  Result := ExpandConstant('{userdocs}\Rainmeter\Skins\LaptopInfo\@Resources\Settings.inc');
+  Result := ExpandConstant('{userdocs}\Rainmeter\Skins\Loopscape\@Resources\Settings.inc');
 end;
 
 function RainmeterExe: String;
@@ -164,26 +164,115 @@ begin
     (CompareText(GetIniString('Variables', 'WeatherLocation', 'city', SettingsInc), 'windows') = 0);
 end;
 
+function RainmeterIni: String;
+begin
+  Result := ExpandConstant('{userappdata}\Rainmeter\Rainmeter.ini');
+end;
+
+// The widgets (config = folder = ini name) and whether each is on when Settings.inc doesn't say (the newer ones
+// start hidden; the Settings panel turns them on)
+function Widgets: TArrayOfString;
+begin
+  Result := ['Clock', 'WiFi', 'NowShowing', 'SunMoon', 'Rain', 'System', 'Calendar'];
+end;
+
+function WidgetDefault(name: String): String;
+begin
+  if (name = 'Clock') or (name = 'WiFi') or (name = 'NowShowing') then Result := '1' else Result := '0';
+end;
+
+// Shown unless the Settings panel hid it
+function WidgetShown(name: String): Boolean;
+begin
+  Result := GetIniString('Variables', 'Show' + name, WidgetDefault(name), SettingsInc) <> '0';
+end;
+
+// Versions before 1.1 kept the widgets in Skins\LaptopInfo. Move the user's choices (Settings.inc) and each
+// widget's place (its Rainmeter.ini section) to Skins\Loopscape, then remove the old folder so Rainmeter doesn't
+// list both.
+procedure MigrateLaptopInfo;
+var
+  configs, keys: TArrayOfString;
+  i, j, rc: Integer;
+  skins, oldDir, newDir, ini, rm, v: String;
+begin
+  skins := ExpandConstant('{userdocs}\Rainmeter\Skins');
+  oldDir := skins + '\LaptopInfo';
+  newDir := skins + '\Loopscape';
+  if not DirExists(oldDir) or DirExists(newDir) then Exit;
+
+  configs := ['Clock', 'WiFi', 'NowShowing', 'Settings', 'SnapGuides', 'ViewMenu'];
+  // Rainmeter's per-skin keys
+  keys := ['Active', 'WindowX', 'WindowY', 'AnchorX', 'AnchorY', 'ClickThrough', 'Draggable', 'SnapEdges',
+           'KeepOnScreen', 'AutoSelectScreen', 'SavePosition', 'AlwaysOnTop', 'AlphaValue', 'FadeDuration',
+           'HideOnMouseOver', 'LoadOrder', 'Group', 'Favorite'];
+  ini := RainmeterIni;
+  rm := RainmeterExe;
+
+  // Rainmeter has to be closed: a running one keeps the old sections in memory and writes them back. (Setup starts
+  // it again at the end, see CurStepChanged.)
+  if (rm <> '') and RainmeterRunning then
+  begin
+    Exec(rm, '!Quit', '', SW_HIDE, ewWaitUntilTerminated, rc);
+    for i := 1 to 50 do
+      if RainmeterRunning then Sleep(200);
+  end;
+
+  ForceDirectories(newDir + '\@Resources');
+  FileCopy(oldDir + '\@Resources\Settings.inc', newDir + '\@Resources\Settings.inc', False);
+
+  if FileExists(ini) then
+    for i := 0 to GetArrayLength(configs) - 1 do
+      if IniKeyExists('LaptopInfo\' + configs[i], 'WindowX', ini) or IniKeyExists('LaptopInfo\' + configs[i], 'Active', ini) then
+      begin
+        for j := 0 to GetArrayLength(keys) - 1 do
+          if IniKeyExists('LaptopInfo\' + configs[i], keys[j], ini) then
+          begin
+            v := GetIniString('LaptopInfo\' + configs[i], keys[j], '', ini);
+            SetIniString('Loopscape\' + configs[i], keys[j], v, ini);
+          end;
+        DeleteIniSection('LaptopInfo\' + configs[i], ini);
+      end;
+
+  DelTree(oldDir, True, True, True);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopLoopscape;
+  MigrateLaptopInfo;
   Result := '';
 end;
 
-// Rainmeter.ini: the two widgets active. Written before Rainmeter first runs, so a fresh Rainmeter starts with
-// these widgets instead of its sample skins.
+// Settings.inc kept from an older version: add the settings it doesn't have yet (the panel shows them)
+procedure AddMissingSettings;
+var
+  names: TArrayOfString;
+  i: Integer;
+begin
+  names := Widgets;
+  for i := 0 to GetArrayLength(names) - 1 do
+    if not IniKeyExists('Variables', 'Show' + names[i], SettingsInc) then
+      SetIniString('Variables', 'Show' + names[i], WidgetDefault(names[i]), SettingsInc);
+end;
+
+// Rainmeter.ini: the widgets the Settings panel has on, active. Written before Rainmeter first runs, so a fresh
+// Rainmeter starts with these widgets instead of its sample skins.
 procedure ActivateWidgetsInIni;
 var
   ini: String;
+  names: TArrayOfString;
+  i: Integer;
 begin
-  ini := ExpandConstant('{userappdata}\Rainmeter\Rainmeter.ini');
+  ini := RainmeterIni;
   if not FileExists(ini) then
   begin
     ForceDirectories(ExtractFileDir(ini));
     SaveStringToFile(ini, '[Rainmeter]' + #13#10 + #13#10, False);
   end;
-  SetIniString('LaptopInfo\Clock', 'Active', '1', ini);
-  SetIniString('LaptopInfo\WiFi', 'Active', '1', ini);
+  names := Widgets;
+  for i := 0 to GetArrayLength(names) - 1 do
+    if WidgetShown(names[i]) then SetIniString('Loopscape\' + names[i], 'Active', '1', ini);
 end;
 
 procedure WriteDownloadList;
@@ -204,10 +293,12 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  rc: Integer;
+  rc, i: Integer;
   city, rm: String;
+  names: TArrayOfString;
 begin
   if CurStep <> ssPostInstall then Exit;
+  AddMissingSettings;
 
   // weather city (letters, digits, spaces and , . ' - are all WeatherFetch uses)
   city := Trim(CityPage.Values[0]);
@@ -239,9 +330,13 @@ begin
   begin
     if RainmeterRunning then
     begin
-      Exec(rm, '!ActivateConfig "LaptopInfo\Clock" "Clock.ini"', '', SW_HIDE, ewWaitUntilTerminated, rc);
-      Exec(rm, '!ActivateConfig "LaptopInfo\WiFi" "WiFi.ini"', '', SW_HIDE, ewWaitUntilTerminated, rc);
-      Exec(rm, '!Refresh "LaptopInfo\Clock"', '', SW_HIDE, ewWaitUntilTerminated, rc);
+      // a running Rainmeter only knows the skin folders it found at start: rescan so it sees new widgets
+      Exec(rm, '!RefreshApp', '', SW_HIDE, ewWaitUntilTerminated, rc);
+      Sleep(1500);
+      names := Widgets;
+      for i := 0 to GetArrayLength(names) - 1 do
+        if WidgetShown(names[i]) then
+          Exec(rm, '!ActivateConfig "Loopscape\' + names[i] + '" "' + names[i] + '.ini"', '', SW_HIDE, ewWaitUntilTerminated, rc);
     end
     else
     begin
@@ -259,27 +354,30 @@ end;
 
 function InitializeUninstall: Boolean;
 var
-  rc: Integer;
+  rc, i: Integer;
   rm, ini: String;
+  names: TArrayOfString;
 begin
   StopLoopscape;
   rm := RainmeterExe;
+  names := Widgets;
+  SetArrayLength(names, GetArrayLength(names) + 3);
+  names[GetArrayLength(names) - 3] := 'Settings';
+  names[GetArrayLength(names) - 2] := 'SnapGuides';
+  names[GetArrayLength(names) - 1] := 'ViewMenu';
   if (rm <> '') and RainmeterRunning then
   begin
-    Exec(rm, '!DeactivateConfig "LaptopInfo\Clock"', '', SW_HIDE, ewWaitUntilTerminated, rc);
-    Exec(rm, '!DeactivateConfig "LaptopInfo\WiFi"', '', SW_HIDE, ewWaitUntilTerminated, rc);
-    Exec(rm, '!DeactivateConfig "LaptopInfo\Settings"', '', SW_HIDE, ewWaitUntilTerminated, rc);
+    for i := 0 to GetArrayLength(names) - 1 do
+      Exec(rm, '!DeactivateConfig "Loopscape\' + names[i] + '"', '', SW_HIDE, ewWaitUntilTerminated, rc);
     Sleep(1000);   // let Rainmeter release the skin's fonts
   end
   else
   begin
-    ini := ExpandConstant('{userappdata}\Rainmeter\Rainmeter.ini');
+    ini := RainmeterIni;
     if FileExists(ini) then
-    begin
-      SetIniString('LaptopInfo\Clock', 'Active', '0', ini);
-      SetIniString('LaptopInfo\WiFi', 'Active', '0', ini);
-      SetIniString('LaptopInfo\Settings', 'Active', '0', ini);
-    end;
+      for i := 0 to GetArrayLength(names) - 1 do
+        if IniKeyExists('Loopscape\' + names[i], 'Active', ini) then
+          SetIniString('Loopscape\' + names[i], 'Active', '0', ini);
   end;
   RegDeleteValue(HKCU, '{#RunKey}', 'Loopscape');
   Result := True;
@@ -289,11 +387,11 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep <> usPostUninstall then Exit;
   if SuppressibleMsgBox('Also delete your wallpaper videos and widget settings?' + #13#10 + #13#10 +
-       ExpandConstant('{%USERPROFILE}\Loopscape') + #13#10 + ExpandConstant('{userdocs}\Rainmeter\Skins\LaptopInfo') + #13#10 + #13#10 +
+       ExpandConstant('{%USERPROFILE}\Loopscape') + #13#10 + ExpandConstant('{userdocs}\Rainmeter\Skins\Loopscape') + #13#10 + #13#10 +
        'Choose No to keep them for a later reinstall.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES then
   begin
     DelTree(ExpandConstant('{%USERPROFILE}\Loopscape'), True, True, True);
-    DelTree(ExpandConstant('{userdocs}\Rainmeter\Skins\LaptopInfo'), True, True, True);
+    DelTree(ExpandConstant('{userdocs}\Rainmeter\Skins\Loopscape'), True, True, True);
   end;
   // Rainmeter itself stays installed (it may run other skins); remove it from Settings > Apps if you like
 end;

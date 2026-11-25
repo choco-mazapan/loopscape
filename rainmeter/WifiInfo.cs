@@ -2,7 +2,7 @@
 // `netsh wlan show interfaces` (wifi.lua parses either). It replaces netsh so that Windows' location settings, which
 // list every app that reads Wi-Fi network names, show this as "Loopscape" instead of "Network Command Shell".
 // Uses the Native Wifi API (wlanapi.dll) directly.
-// Build: csc /target:exe /win32icon:Loopscape.ico /out:LaptopInfo\@Resources\WifiInfo.exe WifiInfo.cs
+// Build: csc /target:exe /win32icon:Loopscape.ico /out:Loopscape\@Resources\WifiInfo.exe WifiInfo.cs
 using System;
 using System.Reflection;
 using System.Runtime.InteropServices;
