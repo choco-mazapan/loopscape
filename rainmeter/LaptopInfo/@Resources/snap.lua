@@ -9,18 +9,34 @@
 -- changes size (e.g. weather loads), the attached one follows. Dragging the attached widget away detaches it.
 --
 -- Widgets share their position through variables: each one writes "x,y,w,h" into Peer_<name> of the others.
--- Rainmeter has no "drag finished" event, so a drop is detected as "position unchanged for a couple of ticks".
+-- Rainmeter has no "drag finished" event, so a drop is detected as "position unchanged for DROP_SECS".
 -- While dragging, the LaptopInfo\SnapGuides skin shows dashed outlines of all targets with the chosen one tinted.
+--
+-- Tick rates (MeasureFastTick in each widget): 1 s when idle, 100 ms while the mouse is over the widget (to notice
+-- a drag starting), 33 ms while it is being dragged, and 16 ms while it glides into its spot after a drop.
+-- The faster rates only run while something is moving, so idle CPU use stays the same.
 
-local STILL_TICKS = 2      -- ticks (x UpdateMs, 100 ms) the widget must sit still before snapping
+local STILL_TICKS = 2      -- ticks a parked widget waits before re-aligning to its spot (PeerChanged, Resnap)
+local DROP_SECS = 0.16     -- how long a dragged widget must sit still to count as dropped
+local GLIDE_SECS = 0.15    -- how long the widget takes to slide from where it was dropped into its spot
 local GUIDES = 'LaptopInfo\\SnapGuides'
 local MAX_GUIDES = 12
+
+-- MeasureFastTick action lists (see the widget .ini files)
+local TICK_DRAG, TICK_GLIDE = 4, 5
 
 local me, peers = nil, {}
 local lastX, lastY, lastW, lastH = nil, nil, nil, nil
 local still, dragging, enabled = 0, false, true
+local movedAt = 0           -- os.clock() of the last tick on which the user's drag moved the widget
 local targets, target = {}, nil
 local attach = nil          -- { peer = 'LaptopInfo\\Clock', rel = 'above'|'below' }
+local glide = nil           -- { fx, fy, tx, ty, start, atX, atY } while sliding into a spot after a drop
+local followers = false     -- whether another widget is stacked on us (checked when a drag starts)
+
+local function fastTick(list, on)
+  SKIN:Bang('!CommandMeasure', 'MeasureFastTick', (on and 'Execute ' or 'Stop ') .. list)
+end
 
 -- ---------- helpers ----------
 -- The widget's visible size is its panel. (The window can be larger: Rainmeter still counts the positions of
@@ -199,17 +215,21 @@ end
 -- ---------- guides overlay ----------
 local function setGuide(name, value) SKIN:Bang('!SetVariable', name, value, GUIDES) end
 
+local function styleGuide(j, on)
+  if on then
+    setGuide('Fill' .. j, '120,175,255,70'); setGuide('Stroke' .. j, '255,255,255,235'); setGuide('Width' .. j, '2')
+  else
+    setGuide('Fill' .. j, '0,0,0,0'); setGuide('Stroke' .. j, '255,255,255,110'); setGuide('Width' .. j, '1.5')
+  end
+end
+
+-- Only the guide losing the tint and the one gaining it change, so only those two meters are updated
+-- (showGuides resets all of them at the start of a drag).
 local function highlight(i)
   if i == target then return end
-  for j = 1, MAX_GUIDES do
-    if j == i then
-      setGuide('Fill' .. j, '120,175,255,70'); setGuide('Stroke' .. j, '255,255,255,235'); setGuide('Width' .. j, '2')
-    else
-      setGuide('Fill' .. j, '0,0,0,0'); setGuide('Stroke' .. j, '255,255,255,110'); setGuide('Width' .. j, '1.5')
-    end
-  end
+  if target then styleGuide(target, false); SKIN:Bang('!UpdateMeter', 'Guide' .. target, GUIDES) end
+  if i then styleGuide(i, true); SKIN:Bang('!UpdateMeter', 'Guide' .. i, GUIDES) end
   target = i
-  SKIN:Bang('!UpdateMeter', '*', GUIDES)
   SKIN:Bang('!Redraw', GUIDES)
 end
 
@@ -225,17 +245,62 @@ local function showGuides(w, h, i)
     local t = targets[j]
     if t then setGuide('GX' .. j, t.x - sx); setGuide('GY' .. j, t.y - sy); setGuide('GH' .. j, '0')
     else setGuide('GH' .. j, '1') end
+    styleGuide(j, false)
   end
   target = nil
+  SKIN:Bang('!UpdateMeter', '*', GUIDES)
   highlight(i)
   SKIN:Bang('!ShowFade', GUIDES)
   dragging = true
+  fastTick(TICK_DRAG, true)
 end
 
 local function hideGuides()
-  if dragging then SKIN:Bang('!HideFade', GUIDES); setTooltips(false) end
+  if dragging then SKIN:Bang('!HideFade', GUIDES); setTooltips(false); fastTick(TICK_DRAG, false) end
   dragging = false
   target = nil
+end
+
+-- Does another widget sit stacked on us? Then it follows us live while we are dragged or glide.
+local function hasFollowers()
+  for _, r in pairs(peerRects(true)) do if r[5] == me then return true end end
+  return false
+end
+
+-- ---------- glide into the spot after a drop ----------
+local function easeOut(t) return 1 - (1 - t) ^ 3 end
+
+-- Positions in between are reported to the other widgets only when one of them follows us; the final
+-- position is always reported (by Update) once the glide ends.
+local function startGlide(fx, fy, tx, ty)
+  if math.abs(tx - fx) + math.abs(ty - fy) < 4 then return false end   -- too close to see: just move
+  glide = { fx = fx, fy = fy, tx = tx, ty = ty, start = os.clock(), atX = fx, atY = fy }
+  fastTick(TICK_GLIDE, true)
+  return true
+end
+
+local function stopGlide()
+  glide = nil
+  fastTick(TICK_GLIDE, false)
+end
+
+-- One frame of the glide. Returns true when it has reached the spot.
+local function stepGlide()
+  local g = glide
+  local p = (os.clock() - g.start) / GLIDE_SECS
+  local nx, ny
+  if p >= 1 then nx, ny = g.tx, g.ty
+  else
+    local e = easeOut(math.max(0, p))
+    nx, ny = math.floor(g.fx + (g.tx - g.fx) * e + 0.5), math.floor(g.fy + (g.ty - g.fy) * e + 0.5)
+  end
+  if nx ~= g.atX or ny ~= g.atY then
+    SKIN:Bang('!Move', nx, ny)
+    g.atX, g.atY = nx, ny
+    lastX, lastY = nx, ny
+    if followers and p < 1 then Broadcast(nx, ny) end
+  end
+  return p >= 1
 end
 
 -- ---------- main ----------
@@ -266,24 +331,48 @@ function Update()
   if w <= 1 or h <= 1 then return 0 end
   enabled = num('SnapEnabled', 1) == 1   -- can be changed live from the Settings panel
   if not enabled then
+    if glide then stopGlide() end
     if x ~= lastX or y ~= lastY or w ~= lastW or h ~= lastH then lastX, lastY, lastW, lastH = x, y, w, h; Broadcast() end
     return 0
+  end
+
+  if glide then
+    if x == glide.atX and y == glide.atY then
+      if not stepGlide() then return 1 end
+      -- Arrived. lastW/lastH still hold the size at the drop, so a size change during the glide re-aligns next tick.
+      local tx, ty = glide.tx, glide.ty
+      stopGlide()
+      lastX, lastY, still = tx, ty, STILL_TICKS
+      updateMatch(); updateAlign(tx, w)
+      Broadcast(tx, ty)
+      return 1
+    end
+    -- Grabbed again mid-glide, or moved by something else (a wallpaper change): handled below as usual
+    stopGlide()
   end
 
   if x ~= lastX or y ~= lastY then
     if lastX ~= nil then
       -- Being dragged by the user: show the targets and highlight the one it would snap to
-      if not dragging then targets = buildTargets(w, h); attach = nil end
+      if not dragging then targets = buildTargets(w, h); attach = nil; followers = hasFollowers() end
       local _, i = nearestTarget(x, y)
       if dragging then highlight(i) else showGuides(w, h, i) end
+      -- a widget stacked on us moves with us during the drag instead of jumping after the drop
+      if followers then Broadcast(x, y) end
     end
     lastX, lastY, still = x, y, 0
     lastW, lastH = w, h
+    movedAt = os.clock()
     return 0
   end
 
   still = still + 1
-  if still < STILL_TICKS and w == lastW and h == lastH then return 0 end
+  if dragging then
+    if os.clock() - movedAt < DROP_SECS and w == lastW and h == lastH then return 0 end
+    still = STILL_TICKS
+  elseif still < STILL_TICKS and w == lastW and h == lastH then
+    return 0
+  end
   local sizeChanged = (w ~= lastW or h ~= lastH)
   lastW, lastH = w, h
 
@@ -304,6 +393,8 @@ function Update()
       dbg('dropped -> ' .. tx .. ',' .. ty .. (t.peer and (' stacked ' .. t.rel .. ' ' .. t.peer) or ' screen spot'))
     end
     hideGuides()
+    -- Slide into the spot instead of jumping there; the glide's last frame does the usual matching and sharing
+    if tx and startGlide(x, y, tx, ty) then return 1 end
   elseif attach then
     -- Stacked: follow the widget we sit on
     dbg('attached to ' .. attach.peer .. ' ' .. attach.rel .. ' peerVar=' .. SKIN:GetVariable('Peer_' .. key(attach.peer), '(none)'))
