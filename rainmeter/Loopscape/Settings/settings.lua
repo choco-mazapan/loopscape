@@ -281,10 +281,57 @@ function ToggleExclude(i)
   if hovered == tonumber(i) then Hover(i) end
 end
 
--- Weather city: a text box over the City row (MeasureCityInput); Enter calls SetCity with the text in CityInput
+-- Weather city: a text box (MeasureCityInput) inside the City row's value button. Enter calls SetCity with the text
+-- in CityInput; Enter, Esc and clicking elsewhere all call EndEditCity.
+local CITY_METER = 'MeterVal22'
+local CITY_PAD_X, CITY_PAD_Y = 12, 5   -- StyleValue's Padding
+local CITY_MIN_W = 180                 -- room to type even when the button says something short
+local editingCity = false
+
+-- the button's normal hover feedback, also restored by EndEditCity
+local function cityHover(on)
+  local color = on and '#ColorPillHover#' or '#ColorPill#'
+  return '[!SetOption ' .. CITY_METER .. ' SolidColor ' .. color .. '][!UpdateMeter ' .. CITY_METER .. '][!Redraw]'
+end
+
 function EditCity()
   CloseDropdown()
+  local m = SKIN:GetMeter(CITY_METER)
+  -- widen the button leftward (it is right-aligned) when its text is short
+  if m:GetW() < CITY_MIN_W then
+    SKIN:Bang('!SetOption', CITY_METER, 'W', CITY_MIN_W - 2 * CITY_PAD_X)
+  end
+  -- keep the button as the box's frame: lit, with its text hidden and hover turned off while typing
+  SKIN:Bang('!SetOption', CITY_METER, 'SolidColor', SKIN:GetVariable('ColorPillHover'))
+  SKIN:Bang('!SetOption', CITY_METER, 'FontColor', '0,0,0,0')
+  SKIN:Bang('!SetOption', CITY_METER, 'FontEffectColor', '0,0,0,0')
+  SKIN:Bang('!SetOption', CITY_METER, 'MouseOverAction', '')
+  SKIN:Bang('!SetOption', CITY_METER, 'MouseLeaveAction', '')
+  SKIN:Bang('!UpdateMeter', CITY_METER)
+  SKIN:Bang('!Redraw')
+  -- right edge from the layout: a right-aligned String meter's GetX depends on how it is asked
+  local right = (tonumber(SKIN:GetVariable('PanelWidth')) or 460) - (tonumber(SKIN:GetVariable('Pad')) or 22)
+  local w, h = m:GetW(), m:GetH()
+  SKIN:Bang('!SetOption', 'MeasureCityInput', 'X', right - w + CITY_PAD_X)
+  SKIN:Bang('!SetOption', 'MeasureCityInput', 'Y', m:GetY() + CITY_PAD_Y)
+  SKIN:Bang('!SetOption', 'MeasureCityInput', 'W', w - 2 * CITY_PAD_X)
+  SKIN:Bang('!SetOption', 'MeasureCityInput', 'H', h - 2 * CITY_PAD_Y)
+  SKIN:Bang('!UpdateMeasure', 'MeasureCityInput')
+  editingCity = true
   SKIN:Bang('!CommandMeasure', 'MeasureCityInput', 'ExecuteBatch 1')
+end
+
+function EndEditCity()
+  if not editingCity then return end
+  editingCity = false
+  SKIN:Bang('!SetOption', CITY_METER, 'W', '')
+  SKIN:Bang('!SetOption', CITY_METER, 'SolidColor', SKIN:GetVariable('ColorPill'))
+  SKIN:Bang('!SetOption', CITY_METER, 'FontColor', SKIN:GetVariable('ColorMain'))
+  SKIN:Bang('!SetOption', CITY_METER, 'FontEffectColor', SKIN:GetVariable('ColorShadow'))
+  SKIN:Bang('!SetOption', CITY_METER, 'MouseOverAction', cityHover(true))
+  SKIN:Bang('!SetOption', CITY_METER, 'MouseLeaveAction', cityHover(false))
+  SKIN:Bang('!UpdateMeter', CITY_METER)
+  SKIN:Bang('!Redraw')
 end
 function SetCity()
   -- letters, digits, spaces and , . ' - only: the value ends up on WeatherFetch's command line
