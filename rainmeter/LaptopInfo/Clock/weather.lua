@@ -14,6 +14,14 @@ local function setTip(meter, text)
   SKIN:Bang('!SetOption', meter, 'ToolTipText', text)
 end
 
+-- The clock's meters only update when asked (DefaultUpdateDivider=-1), so update all of them: the panel, the pills
+-- and the stack width follow the weather text. Two passes because the panel and pills come before the text they wrap.
+local function redraw()
+  SKIN:Bang('!UpdateMeter', '*')
+  SKIN:Bang('!UpdateMeter', '*')
+  SKIN:Bang('!Redraw')
+end
+
 local function classify(code, day)
   if code == 0 then return (day and 'clear-day' or 'clear-night'), 'Clear' end
   if code == 1 then return (day and 'clear-day' or 'clear-night'), 'Mostly clear' end
@@ -55,8 +63,7 @@ function Update()
       SKIN:Bang('!UpdateMeasure', 'MeasureWeatherTemp')
       SKIN:Bang('!SetOption', 'MeterWeatherDesc', 'Text', e)
       SKIN:Bang('!SetOption', 'MeterWeatherCity', 'Text', '')
-      SKIN:Bang('!UpdateMeterGroup', 'Weather')
-      SKIN:Bang('!Redraw')
+      redraw()
       lastDesc = nil
       return e
     end
@@ -79,7 +86,6 @@ function Update()
   for _, m in ipairs({ 'MeterWeatherIcon', 'MeterWeatherTemp', 'MeterWeatherDesc', 'MeterWeatherCity' }) do
     setTip(m, desc .. ' - ' .. where .. 'via ' .. via)
   end
-  SKIN:Bang('!UpdateMeterGroup', 'Weather')
 
   -- 3-day forecast: fcN=Day|code|max|min
   local shown = 0
@@ -96,9 +102,8 @@ function Update()
       shown = shown + 1
     end
   end
-  if shown > 0 then SKIN:Bang('!UpdateMeterGroup', 'Forecast') end
   -- (visibility per view is handled by each meter's Hidden=(#View#>=n) option)
-  SKIN:Bang('!Redraw')
+  redraw()
   lastDesc = desc
   return desc
 end
