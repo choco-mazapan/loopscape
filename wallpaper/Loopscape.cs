@@ -697,6 +697,7 @@ static class Loopscape
             else Log("setting windows wallpaper failed: " + path);
         }
         catch (Exception e) { Log("setting windows wallpaper failed: " + e.Message); }
+        WidgetThemes.Kick();   // the widgets sit on a new picture
         LastStill = path;
     }
 
@@ -1598,6 +1599,7 @@ static class Loopscape
                     }
                     else UpdateBatteryStill();   // hourly still rotation while on battery
                     PublishStatus(battery, batteryMode, windowCovers);
+                    WidgetThemes.SetWallpaperMoving(wantVideo && MpvRunning && !covered && !(battery && batteryMode == "pause"));
                 }
                 catch (Exception e) { Log("error: " + e.Message); }
 
@@ -2119,6 +2121,38 @@ static class WidgetThemes
     }
     static bool Bursting { get { return clock.ElapsedMilliseconds < Interlocked.Read(ref burstUntil); } }
 
+    // Whether the video wallpaper is playing (set by the main loop). While it isn't (paused, covered by a window,
+    // a still on battery), the screen behind the widgets only changes when something else does, so the screen isn't
+    // read again until a widget moves, a setting or line layout changes, the wallpaper changes (Kick) or 30 s pass.
+    static volatile bool wallpaperMoving = true;
+    public static void SetWallpaperMoving(bool moving)
+    {
+        if (moving == wallpaperMoving) return;
+        wallpaperMoving = moving;
+        resample = true;   // the pause may have frozen a different frame than the last sample showed
+        wake.Set();
+    }
+    static volatile bool resample;
+    const int StillResampleMs = 30000;
+    static string lastInputs;          // what the last screen sample was taken for (Inputs)
+    static long lastSampleMs = long.MinValue / 2;
+
+    // Everything apart from the screen itself that the colours depend on: the settings, each widget's place and size,
+    // its published line layout and pending moves
+    static string Inputs(Dictionary<string, RECT> widgets)
+    {
+        var sb = new StringBuilder(settingsStamp.Ticks.ToString(CultureInfo.InvariantCulture));
+        foreach (var w in widgets)
+        {
+            string lines = Path.Combine(Loopscape.State, "lines-" + w.Key.Replace('\\', '_') + ".txt");
+            sb.Append('|').Append(w.Key).Append(' ').Append(w.Value.L).Append(',').Append(w.Value.T).Append(',')
+              .Append(w.Value.R).Append(',').Append(w.Value.B).Append(' ').Append(Stamp(lines));
+        }
+        sb.Append("|moveto ").Append(Stamp(Path.Combine(Loopscape.State, "moveto.txt")));
+        return sb.ToString();
+    }
+    static long Stamp(string f) { try { return File.Exists(f) ? File.GetLastWriteTimeUtc(f).Ticks : 0; } catch { return -1; } }
+
     public static void Start()
     {
         var t = new Thread(delegate ()
@@ -2423,9 +2457,15 @@ static class WidgetThemes
         var widgetCfgs = new List<string>();
         if (active)
         {
+            var widgets = Widgets();
+            string inputs = Inputs(widgets);
+            bool still = !wallpaperMoving && !Bursting && Loopscape.IncomingStill == null;
+            if (still && !resample && inputs == lastInputs && clock.ElapsedMilliseconds - lastSampleMs < StillResampleMs)
+                return fast ? 1000 : 3000;   // nothing behind the widgets can have changed: keep bgtheme.txt as it is
+            lastInputs = inputs; lastSampleMs = clock.ElapsedMilliseconds; resample = false;
             var moveTo = PendingMoves();
             var incoming = IncomingImage();   // also frees the last one once its crossfade is over
-            foreach (var pair in Widgets())
+            foreach (var pair in widgets)
             {
                 widgetCfgs.Add(pair.Key);
                 // a widget about to move for a new wallpaper (snap.lua beginMove) is sampled where it is going, so its
