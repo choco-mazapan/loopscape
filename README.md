@@ -75,6 +75,8 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and No
 
 **Readability.** Settings → Look controls how the text stands out from the wallpaper. *Panel darkness* puts a dark box behind each widget. With the panel off, the text can sit on pills and turn light or dark to suit the wallpaper. *Text boost* adds anything from a soft shadow to a bold outline.
 
+**Size.** Settings → Look → *Widget size* makes the widgets bigger. On *Auto* they grow with the screen: 100% up to 1080p, 125% at 1440p, 200% at 4K. You can also pick a fixed size from 100% to 250%.
+
 **Profiles.** Settings → Profiles saves everything in the panel, plus each widget's view, to one of three slots. Load a slot to switch back to that setup.
 
 ## Using Loopscape

@@ -9,6 +9,9 @@ SnapEnabled=1
 ; 76 clears the taskbar, 28 sits over a transparent taskbar (same margin as the other edges), 8 hugs the bottom of
 ; the screen. The Settings panel also takes any number from 0 to 400.
 SnapBottomMargin=76
+; Widget size: 0 = automatic (bigger on screens taller than 1080 pixels: 1.25 at 1440p, 2 at 4K), or a factor:
+; 1 (100%), 1.25, 1.5, 1.75, 2 or 2.5. See Scale.inc
+WidgetScale=0
 ; Clock: 24 (14:30) or 12 (2:30 PM)
 ClockFormat=12
 ; Clock date line, as a Rainmeter Time format: %a, %#d %B (Wed, 25 November), %a, %m/%d/%y (Wed, 11/25/26),

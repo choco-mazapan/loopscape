@@ -48,6 +48,10 @@ local ROWS = {
   { 'PanelAlpha',    'MeterVal4', { { '0', 'Off' }, { '110', 'Light' }, { '150', 'Medium' }, { '200', 'Dark' } } },
   { 'TextEffect',    'MeterVal8', { { 'Shadow', 'Shadow' }, { 'Border', 'Outline' }, { 'None', 'None' } } },
   { 'TextPills',     'MeterVal10', { { '1', 'On' }, { '0', 'Off' } } },
+  -- read by every widget through @Resources\Scale.inc: 0 = automatic (from the screen height), or a factor.
+  -- Initialize adds the automatic size to the Auto label
+  { 'WidgetScale',   'MeterVal27', { { '0', 'Auto' }, { '1', '100%' }, { '1.25', '125%' }, { '1.5', '150%' },
+                                     { '1.75', '175%' }, { '2', '200%' }, { '2.5', '250%' } }, '0' },
   -- read by snap.lua in each widget (see BOOST there)
   { 'TextBoost',     'MeterVal18', { { '0', 'Off' }, { '1', '1 Soft shadow' }, { '2', '2 Drop shadow' }, { '3', '3 Halo' },
                                      { '4', '4 Outline + halo' }, { '5', '5 Bold + outline' }, { '6', '6 Maximum' } } },
@@ -331,8 +335,17 @@ local function showUpdate(force)
   end
 end
 
+-- The size Auto picks on this screen, worked out as Scale.inc does: the screen height over 1080, in steps of 0.25
+-- from 1 to 3 (1440p 125%, 4K 200%)
+local function autoScale()
+  local h = tonumber(SKIN:GetVariable('SCREENAREAHEIGHT', '1080')) or 1080
+  local f = math.floor(h * 4 / 1080 + 0.5) / 4
+  return math.max(1, math.min(3, f))
+end
+
 function Initialize()
   INC = SKIN:GetVariable('@') .. 'Settings.inc'
+  row('WidgetScale')[3][1][2] = 'Auto (' .. math.floor(autoScale() * 100 + 0.5) .. '%)'
   for _, d in ipairs(DIMMED) do
     local m = SKIN:GetMeter('MeterHint' .. d.n)
     HINTS[d.n] = m and m:GetOption('Text') or ''
@@ -396,6 +409,12 @@ local function apply(var, value)
         end
       end
     end
+    return
+  elseif var == 'WidgetScale' then
+    -- the widgets work their sizes out when they load (Scale.inc), so refresh the ones on screen. Each keeps its
+    -- snap spot: snap.lua places it again at its new size
+    local on = running()
+    for _, w in ipairs(WIDGETS) do if on(w) then SKIN:Bang('!Refresh', w) end end
     return
   elseif var == 'TextColorMode' or var:match('^Wall') then
     -- read from Settings.inc by Loopscape, which watches the file and crossfades to a new style by itself

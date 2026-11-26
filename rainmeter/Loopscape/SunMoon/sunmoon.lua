@@ -5,8 +5,16 @@ local mRun
 local shown = {}   -- values already sent, so a minute that changes nothing costs no bangs
 local dirty = false
 
+-- Widget size (Settings > Widgets > Widget size): sizes in the skin are formulas such as (220*#Scale#), so read them
+-- with ParseFormula; distances written here are pixels at 100% and are multiplied by scale
+local scale = 1
+local function size(name, default)
+  return tonumber(SKIN:ParseFormula(SKIN:GetVariable(name, tostring(default)))) or default
+end
+
 function Initialize()
   mRun = SKIN:GetMeasure('MeasureSunRun')
+  scale = size('Scale', 1)
 end
 
 local function setVar(name, value)
@@ -77,8 +85,8 @@ local function moon()
   -- the icon: the lit half (right while waxing, left while waning), then the terminator's ellipse taken away
   -- (crescent) or added (gibbous)
   local waxing = age < SYNODIC / 2
-  setVar('MoonDarkX', waxing and 0 or 8)
-  setVar('MoonRX', string.format('%.2f', math.max(0.3, 7 * math.abs(k))))
+  setVar('MoonDarkX', waxing and 0 or 8 * scale)
+  setVar('MoonRX', string.format('%.2f', math.max(0.3, 7 * math.abs(k)) * scale))
   setVar('MoonOp', k > 0 and 'Exclude' or 'Union')
   -- days until the next full / new moon
   local nextName, days
@@ -92,14 +100,13 @@ end
 
 -- ---------- sun ----------
 local function placeSun(t, day)
-  local w = tonumber(SKIN:GetVariable('ArcW', '220')) or 220
-  local h = tonumber(SKIN:GetVariable('ArcH', '58')) or 58
-  local rx, ry, base = w / 2 - 8, h - 8, h - 1
+  local w, h = size('ArcW', 220), size('ArcH', 58)
+  local rx, ry, base = w / 2 - 8 * scale, h - 8 * scale, h - scale
   t = math.max(0.004, math.min(0.996, t))
   setVar('ArcRX', rx); setVar('ArcRY', ry); setVar('ArcBase', base)
   setVar('SunX', string.format('%.1f', w / 2 - rx * math.cos(math.pi * t)))
   setVar('SunY', string.format('%.1f', base - ry * math.sin(math.pi * t)))
-  setVar('SunFill', day and 6.5 or 0.01)   -- a filled sun by day, a ring at night
+  setVar('SunFill', day and 6.5 * scale or 0.01)   -- a filled sun by day, a ring at night
 end
 
 function Update()
