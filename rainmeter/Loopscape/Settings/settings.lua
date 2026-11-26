@@ -184,18 +184,74 @@ function ShowTab(name)
   SKIN:Bang('!Redraw')
 end
 
+-- ---------- Update Loopscape row (Look tab): what update.ps1 last found, from %LOCALAPPDATA%\Loopscape\updatestatus.txt ----------
+-- The file exists only for a Loopscape set up from a git clone, after Update Loopscape has run once; nothing checks
+-- GitHub in the background. sync.ps1 deletes it when it installs another commit by hand.
+local lastUpdateText = nil
+
+local function readUpdateStatus()
+  local f = io.open(STATE .. 'updatestatus.txt', 'r')
+  if not f then return nil end
+  local st = {}
+  for line in f:lines() do
+    local k, v = line:match('^([%w]+)=(.*)$')
+    if k then st[k] = v:gsub('%s+$', '') end
+  end
+  f:close()
+  return st
+end
+
+-- "today", "yesterday" or "26 Nov" for the checked= time ("2026-11-26 17:20")
+local function checkedDay(stamp)
+  local y, m, d = (stamp or ''):match('^(%d+)-(%d+)-(%d+)')
+  if not y then return nil end
+  local t = os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 12 })
+  local today = os.date('*t')
+  local days = math.floor((os.time({ year = today.year, month = today.month, day = today.day, hour = 12 }) - t) / 86400 + 0.5)
+  if days == 0 then return 'today' elseif days == 1 then return 'yesterday' end
+  return tostring(tonumber(d)) .. ' ' .. os.date('%b', t)
+end
+
+local function showUpdate(force)
+  local st = readUpdateStatus() or {}
+  local label, hint, button = 'Update Loopscape', 'Get the latest version from GitHub', 'Update  [\\x203A]'
+  local day = checkedDay(st.checked)
+  if st.state == 'uptodate' and (st.version or '') ~= '' then
+    label = 'Loopscape is up to date'
+    hint = 'Version ' .. st.version .. (day and (', checked ' .. day) or '')
+    button = 'Check again  [\\x203A]'
+  elseif st.state == 'available' and (tonumber(st.count) or 0) > 0 then
+    local n = tonumber(st.count)
+    hint = n .. ' new change' .. (n == 1 and '' or 's') .. ' on GitHub' .. (day and (', checked ' .. day) or '')
+  end
+  local key = label .. '|' .. hint .. '|' .. button
+  if key == lastUpdateText and not force then return end
+  lastUpdateText = key
+  SKIN:Bang('!SetOption', 'MeterLabel23', 'Text', label)
+  SKIN:Bang('!SetOption', 'MeterHint23', 'Text', hint)
+  SKIN:Bang('!SetOption', 'MeterVal23', 'Text', button)
+  if not force then
+    SKIN:Bang('!UpdateMeter', 'MeterLabel23'); SKIN:Bang('!UpdateMeter', 'MeterHint23'); SKIN:Bang('!UpdateMeter', 'MeterVal23')
+    SKIN:Bang('!Redraw')
+  end
+end
+
 function Initialize()
   INC = SKIN:GetVariable('@') .. 'Settings.inc'
   local tab = SKIN:GetVariable('Tab', 'Wallpaper')
   local known = false
   for _, t in ipairs(TABS) do if t == tab then known = true end end
   show()
+  showUpdate(true)   -- before ShowTab, which updates and redraws every meter
   ShowTab(known and tab or 'Wallpaper')
   showNow(true)
 end
 
 function Update()
-  if SKIN:GetVariable('Tab', '') == 'Wallpaper' then showNow(false) end
+  local tab = SKIN:GetVariable('Tab', '')
+  if tab == 'Wallpaper' then showNow(false)
+  -- the update window may finish while the panel is open: a small file, read once a second only on this tab
+  elseif tab == 'Look' then showUpdate(false) end
   return 0
 end
 

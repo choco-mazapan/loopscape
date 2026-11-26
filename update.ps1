@@ -13,6 +13,8 @@
 #   4. fast-forwards to the commit that was checked and runs sync.ps1, which rebuilds what changed, restarts Loopscape and refreshes
 #      the widgets, with a progress bar
 #   5. shows what was updated on this PC
+# It saves what it found in %LOCALAPPDATA%\Loopscape\updatestatus.txt, which the tray menu and the Settings panel read
+# to say "up to date" or how many changes are waiting (see Save-Status). Nothing checks GitHub in the background.
 # Everything it runs goes to %USERPROFILE%\Loopscape\update.log. Versions are <last v tag>.<commits since it that
 # change Loopscape's files> (v1.0.0 plus 45 such commits = 1.0.0.45).
 #   powershell -ExecutionPolicy Bypass -File .\update.ps1
@@ -96,6 +98,24 @@ function Get-Version($ref) {
     return "$($Matches[1]).$n"
   }
   (Invoke-Git rev-parse --short $ref).Out | Select-Object -First 1
+}
+
+# What the last check found, for the tray menu and the Settings panel (Loopscape.cs UpdateStatus, settings.lua
+# readUpdateStatus). state is uptodate or available; version is this PC's; commit is the clone's commit it describes.
+# sync.ps1 deletes the file when it installs another commit by hand, so a stale "up to date" isn't shown. A dry run
+# saves nothing.
+$statusFile = Join-Path $env:LOCALAPPDATA 'Loopscape\updatestatus.txt'
+function Save-Status($st, $version, $latest, $count, $commit) {
+  if ($DryRun) { return }
+  $lines = @("state=$st", "version=$version", "latest=$latest", "count=$count", "commit=$commit", "checked=$(Get-Date -Format 'yyyy-MM-dd HH:mm')")
+  try {
+    New-Item -ItemType Directory -Force (Split-Path $statusFile) | Out-Null
+    # write a temporary file and swap it in, so a reader never sees half a file
+    $tmp = "$statusFile.tmp"
+    [IO.File]::WriteAllLines($tmp, [string[]]$lines, (New-Object Text.UTF8Encoding $false))
+    if (Test-Path -LiteralPath $statusFile) { [IO.File]::Replace($tmp, $statusFile, $null) } else { [IO.File]::Move($tmp, $statusFile) }
+    Log "status: $($lines -join ', ')"
+  } catch { Log "status: couldn't save ($_)" }
 }
 
 # ---------------- GitHub build checks ----------------
@@ -281,6 +301,7 @@ function Show-Changes {
   $state.Target = (Invoke-Git rev-parse origin/main).Out | Select-Object -First 1
   $target = $state.Target
   $here = Get-Version HEAD
+  $head = (Invoke-Git rev-parse HEAD).Out | Select-Object -First 1
   $state.NewVersion = Get-Version $target
   $new = @((Invoke-Git log --no-merges '--format=%cs%x09%s' "HEAD..$target" '--' @appPaths).Out | Where-Object { $_ })
   $all = @((Invoke-Git rev-list --no-merges "HEAD..$target").Out | Where-Object { $_ })
@@ -313,6 +334,7 @@ function Show-Changes {
     $status.Location = $list.Location; $status.Size = New-Object Drawing.Size($list.Width, [int]($list.Height / 3)); $status.Visible = $true
     $primary.Text = 'Close'; $primary.Enabled = $true; $cancel.Visible = $false; $primary.Left = $cancel.Left
     Log "already up to date ($other other commits left out)"
+    Save-Status 'uptodate' $here $here 0 $head
     Save-Screenshot 'up-to-date'
     return
   }
@@ -325,6 +347,8 @@ function Show-Changes {
     $item.ForeColor = $dim
     [void]$list.Items.Add($item)
   }
+  # a clone on another branch or with only local changes isn't "behind": leave the saved status as it was
+  if ($new.Count -gt 0) { Save-Status 'available' $here $state.NewVersion $new.Count $head }
   $note.Text = $notes -join "`n"; $note.Visible = $notes.Count -gt 0
   $state.Busy = $false
   $primary.Text = 'Update'; $primary.Enabled = $false
@@ -429,6 +453,7 @@ function Finish-Update($proc) {
     Fail ("The new code arrived, but installing it failed:`n$why" + (& $stashNote))
     return
   }
+  Save-Status 'uptodate' $state.NewVersion $state.NewVersion 0 $state.Target
   $text = if ($DryRun) { "Dry run: nothing was changed. A real update would install version $($state.NewVersion)." }
           else { "This PC now runs version $($state.NewVersion)." }
   $installed = @($out | Where-Object { $_ -match '^\s{2}\S' } | ForEach-Object { '    ' + $_.Trim() })
