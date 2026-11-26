@@ -242,17 +242,38 @@ static class Loopscape
 
     static string Num(double d) { return d.ToString("0.###", CultureInfo.InvariantCulture); }
 
-    // Video filter that blends the static wallpaper (fill-cropped to the screen) over the video.
-    // opacity 1 = only the wallpaper, 0 = only the video.
-    static string BlendFilter(double opacity) { return BlendFilter("static.jpg", opacity); }
-    static string BlendFilter(string image, double opacity)
+    // Video filter that blends the static wallpaper over the video. opacity 1 = only the wallpaper, 0 = only the video.
+    static string BlendFilter(string video, double opacity)
     {
-        int w = GetSystemMetrics(0), h = GetSystemMetrics(1);
-        string size = w + ":" + h;
-        return "@xf:lavfi=[movie=" + image + ",scale=" + size + ":force_original_aspect_ratio=increase,crop=" + size +
-               ",scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[s];" +
-               "[in]hwdownload,format=nv12,scale=" + size + ",format=yuv420p[v];" +
+        return BlendGraph("movie=static.jpg", ",scale=out_color_matrix=bt709:out_range=tv", BlendSize(video), opacity);
+    }
+
+    // The blend filters of the fade-in and the crossfade: [s] (an image or the previous video, decoded by the filter
+    // itself) over [in] (the new video, decoded on the GPU and copied back for the blend). Both are fill-cropped to the
+    // screen's shape, like mpv shows the video (--panscan=1.0). The blend runs on the CPU, so it happens at the
+    // smaller of the video's and the screen's resolution (BlendSize), and mpv scales the result up on the GPU as it
+    // does for the video alone: at 4K the 1080p styles blend a quarter of the pixels, and nothing changes on screen
+    // when the filter is dropped at the end of the fade.
+    static string BlendGraph(string source, string sourceExtra, int[] size, double opacity)
+    {
+        string wh = size[0] + ":" + size[1];
+        string fill = "scale=" + wh + ":force_original_aspect_ratio=increase,crop=" + wh;
+        return "@xf:lavfi=[" + source + "," + fill + sourceExtra + ",format=yuv420p[s];" +
+               "[in]hwdownload,format=nv12," + fill + ",format=yuv420p[v];" +
                "[s][v]blend=all_mode=normal:all_opacity=" + Num(opacity) + ":shortest=0:repeatlast=1[out]]";
+    }
+
+    // Size the blend filters work at: the screen's shape, as many lines as the part of the video that is shown (or as
+    // the screen, if that has fewer). Screen size if the video's size can't be read. Even numbers, for yuv420p.
+    static int[] BlendSize(string video)
+    {
+        int sw = GetSystemMetrics(0), sh = GetSystemMetrics(1);
+        int[] v = Mp4.VideoSize(video);
+        if (v == null || sw <= 0 || sh <= 0) return new[] { sw, sh };
+        double shownLines = Math.Min(v[1], v[0] * (double)sh / sw);   // the video's height after cropping to the screen's shape
+        int h = (int)Math.Min(sh, shownLines) & ~1;
+        int w = (int)Math.Round(h * (double)sw / sh) & ~1;
+        return h < 2 || w < 2 ? new[] { sw, sh } : new[] { w, h };
     }
 
     static void StartMpv(IntPtr host, bool startOnWallpaper)
@@ -265,7 +286,7 @@ static class Loopscape
                       " --hwdec=auto-safe --panscan=1.0 --really-quiet --idle=no" +
                       " --media-controls=no" +   // keep the wallpaper out of Windows' media flyout (SMTC)
                       " --input-ipc-server=\\\\.\\pipe\\" + PipeName;
-        if (startOnWallpaper) args += " \"--vf=" + BlendFilter(1) + "\"";
+        if (startOnWallpaper) args += " \"--vf=" + BlendFilter(video, 1) + "\"";
         args += " " + Get("mpvArgs", "");
         args += SharpScaling(video) ? " --{ --scale=nearest \"" + video + "\" --}" : " \"" + video + "\"";
         var psi = new ProcessStartInfo(FindMpv(), args);
@@ -723,12 +744,7 @@ static class Loopscape
                     if (double.IsNaN(pos)) pos = 0;
                 }
                 double seek = Math.Max(0, pos + 0.25); // ~time mpv takes to open the next file
-                int w = GetSystemMetrics(0), h = GetSystemMetrics(1);
-                string size = w + ":" + h;
-                string graph = "@xf:lavfi=[movie=" + rel + ":seek_point=" + Num(seek) + ",setpts=PTS-STARTPTS," +
-                               "scale=" + size + ":force_original_aspect_ratio=increase,crop=" + size + ",format=yuv420p[s];" +
-                               "[in]hwdownload,format=nv12,scale=" + size + ",format=yuv420p[v];" +
-                               "[s][v]blend=all_mode=normal:all_opacity=1:shortest=0:repeatlast=1[out]]";
+                string graph = BlendGraph("movie=" + rel + ":seek_point=" + Num(seek) + ",setpts=PTS-STARTPTS", "", BlendSize(next), 1);
                 string opt = "vf=%" + Encoding.UTF8.GetByteCount(graph) + "%" + graph;
                 if (FileOptions(next) != "") opt = FileOptions(next) + "," + opt;
                 if (Ok(Cmd("{\"command\":[\"loadfile\"," + Q(next) + ",\"replace\",-1," + Q(opt) + "]}")))
@@ -1971,6 +1987,91 @@ static class Loopscape
 // Cost: per widget, four 1-pixel strips are copied from the screen per check and a few dozen pixels read; points covered
 // by other windows are skipped. The widget itself is never captured (it is drawn over the wallpaper, so the wallpaper
 // directly behind the text can't be seen - per-line mode estimates it from the wallpaper at the same height beside it).
+// Reads a video's size from its MP4/MOV header (the first track with a picture), without decoding anything
+static class Mp4
+{
+    static readonly Dictionary<string, int[]> cache = new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase);
+
+    // { width, height } in display pixels, or null for other containers and unreadable files
+    public static int[] VideoSize(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        string key;
+        try { var fi = new FileInfo(path); if (!fi.Exists) return null; key = fi.FullName + "|" + fi.Length + "|" + fi.LastWriteTimeUtc.Ticks; }
+        catch { return null; }
+        lock (cache)
+        {
+            int[] v;
+            if (cache.TryGetValue(key, out v)) return v;
+            try { v = Read(path); } catch (Exception e) { Loopscape.LogLine("video size: " + e.Message); v = null; }
+            cache[key] = v;
+            return v;
+        }
+    }
+
+    static int[] Read(string path)
+    {
+        using (var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        {
+            // the top-level boxes: skip to moov (it can be after the media data) and read it whole; it's small
+            long pos = 0, end = f.Length;
+            var head = new byte[16];
+            while (pos + 8 <= end)
+            {
+                f.Position = pos;
+                if (f.Read(head, 0, 16) < 8) return null;
+                long size = U32(head, 0); int hdr = 8;
+                string type = Encoding.ASCII.GetString(head, 4, 4);
+                if (size == 1) { size = (long)((ulong)U32(head, 8) << 32 | (uint)U32(head, 12)); hdr = 16; }
+                else if (size == 0) size = end - pos;
+                if (size < hdr) return null;
+                if (type == "moov")
+                {
+                    if (size > 64 << 20) return null;
+                    var moov = new byte[size - hdr];
+                    f.Position = pos + hdr;
+                    int got = 0, n;
+                    while (got < moov.Length && (n = f.Read(moov, got, moov.Length - got)) > 0) got += n;
+                    return got == moov.Length ? FromMoov(moov) : null;
+                }
+                pos += size;
+            }
+        }
+        return null;
+    }
+
+    // moov > trak > tkhd: width and height are its last two 16.16 fixed-point fields (0 for sound tracks)
+    static int[] FromMoov(byte[] b)
+    {
+        foreach (var trak in Children(b, 0, b.Length, "trak"))
+            foreach (var tkhd in Children(b, trak[0], trak[1], "tkhd"))
+            {
+                int start = tkhd[0], len = tkhd[1] - tkhd[0];
+                int fields = 4 + (b[start] == 1 ? 32 : 20) + 52;   // version/flags, times and ids, then up to width
+                if (len < fields + 8) continue;
+                long w = U32(b, start + fields) >> 16, h = U32(b, start + fields + 4) >> 16;
+                if (w > 0 && h > 0 && w <= 16384 && h <= 16384) return new[] { (int)w, (int)h };
+            }
+        return null;
+    }
+
+    // { content start, content end } of each child box of the given type in b[from, to)
+    static IEnumerable<int[]> Children(byte[] b, int from, int to, string type)
+    {
+        int p = from;
+        while (p + 8 <= to)
+        {
+            long size = U32(b, p);
+            if (size < 8 || p + size > to) yield break;
+            if (b[p + 4] == type[0] && b[p + 5] == type[1] && b[p + 6] == type[2] && b[p + 7] == type[3])
+                yield return new[] { p + 8, (int)(p + size) };
+            p += (int)size;
+        }
+    }
+
+    static long U32(byte[] b, int i) { return (long)b[i] << 24 | (long)b[i + 1] << 16 | (long)b[i + 2] << 8 | b[i + 3]; }
+}
+
 static class WidgetThemes
 {
     delegate bool EnumProc(IntPtr h, IntPtr l);
