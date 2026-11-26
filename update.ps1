@@ -84,11 +84,11 @@ $appPaths = @('.',
   ':(exclude)build/deps.json', ':(exclude)build/get-deps.ps1', ':(exclude)build/stage.ps1', ':(exclude)build/make-styles-release.ps1',
   ':(exclude)wallpaper/styles', ':(exclude)wallpaper/make-loop.ps1', ':(exclude)rainmeter/make-*.ps1')
 
-# "1.0.0.45" for v1.0.0 plus 45 commits that change Loopscape's files; the short commit id when there's no tag
+# "1.0.0.45" for v1.0.0 plus 45 commits (not counting merges) that change Loopscape's files; the short commit id when there's no tag
 function Get-Version($ref) {
   $tag = (Invoke-Git describe --tags --match 'v[0-9]*' --abbrev=0 $ref).Out | Select-Object -First 1
   if ($tag -match '^v(\d+(?:\.\d+)*)$') {
-    $n = (Invoke-Git rev-list --count "$tag..$ref" '--' @appPaths).Out | Select-Object -First 1
+    $n = (Invoke-Git rev-list --count --no-merges "$tag..$ref" '--' @appPaths).Out | Select-Object -First 1
     return "$($Matches[1]).$n"
   }
   (Invoke-Git rev-parse --short $ref).Out | Select-Object -First 1
@@ -129,7 +129,7 @@ $versions.ForeColor = $dim
 
 $list = New-Object Windows.Forms.ListView
 $list.Location = New-Object Drawing.Point(22, 82); $list.Size = New-Object Drawing.Size(516, 220)
-$list.View = 'Details'; $list.FullRowSelect = $true; $list.HeaderStyle = 'Nonclickable'; $list.MultiSelect = $false
+$list.ShowItemToolTips = $true; $list.View = 'Details'; $list.FullRowSelect = $true; $list.HeaderStyle = 'Nonclickable'; $list.MultiSelect = $false
 [void]$list.Columns.Add('Change', 410); [void]$list.Columns.Add('Date', 84)
 $form.Controls.Add($list)
 
@@ -196,7 +196,7 @@ function Show-Result($heading, $text, $failed) {
   $list.Visible = $false; $note.Visible = $false; $progress.Visible = $false; $status.Visible = $false
   $details.Text = $text -replace "`r?`n", "`r`n"; $details.Visible = $true
   $logLink.Visible = $true
-  $primary.Text = 'Close'; $primary.Enabled = $true; $cancel.Visible = $false
+  $primary.Text = 'Close'; $primary.Enabled = $true; $cancel.Visible = $false; $primary.Left = $cancel.Left
   if ($failed) { $title.ForeColor = [Drawing.Color]::FromArgb(176, 0, 32); Log "stopped: $text" } else { Log 'done' }
   $form.Activate()
   Save-Screenshot $(if ($failed) { 'failed' } else { 'result' })
@@ -251,7 +251,7 @@ function Show-Changes {
     $status.Text = if ($other -gt 0) { "There are no new changes to Loopscape or the widgets. GitHub has $otherText, so there's nothing to install." }
                    else { 'There are no new changes on GitHub.' }
     $status.Location = $list.Location; $status.Size = New-Object Drawing.Size($list.Width, [int]($list.Height / 3)); $status.Visible = $true
-    $primary.Text = 'Close'; $primary.Enabled = $true; $cancel.Visible = $false
+    $primary.Text = 'Close'; $primary.Enabled = $true; $cancel.Visible = $false; $primary.Left = $cancel.Left
     Log "already up to date ($other other commits left out)"
     Save-Screenshot 'up-to-date'
     return
@@ -260,7 +260,8 @@ function Show-Changes {
                 else { "$($new.Count) new change$(if ($new.Count -ne 1) { 's' }) on GitHub" }
   if ($new.Count -eq 0) { [void]$list.Items.Add((New-Object Windows.Forms.ListViewItem('No new changes; this PC gets the main branch as it is on GitHub.'))) }
   if ($other -gt 0) {
-    $item = New-Object Windows.Forms.ListViewItem("Not listed: $otherText")
+    $item = New-Object Windows.Forms.ListViewItem("Not listed: $other change$(if ($other -ne 1) { 's' }) to the README and other unused files")
+    $item.ToolTipText = "Not listed: $otherText"
     $item.ForeColor = $dim
     [void]$list.Items.Add($item)
   }
