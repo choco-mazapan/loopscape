@@ -89,9 +89,8 @@ function Update()
   SKIN:Bang('!SetOption', 'MeterWeatherDesc', 'Text', desc)
   SKIN:Bang('!SetOption', 'MeterWeatherCity', 'Text', t.city or '')
   -- (no "updated" time in the tooltip: it would change the tooltip on every fetch)
-  for _, m in ipairs({ 'MeterWeatherIcon', 'MeterWeatherTemp', 'MeterWeatherDesc', 'MeterWeatherCity' }) do
-    setTip(m, desc .. ' - ' .. where .. 'via ' .. via)
-  end
+  -- One tooltip area per block (see the tooltip areas in Clock.ini): a tooltip on each meter opened several at once
+  setTip('MeterWeatherTip', desc .. ' - ' .. where .. 'via ' .. via)
 
   -- 3-day forecast: fcN=Day|code|max|min
   local shown = 0
@@ -102,9 +101,7 @@ function Update()
       setIcon('MeterFcIcon' .. i, iconPath('MeterFcIcon' .. i, 'small\\', sunVariant(ficon, tonumber(hi))))
       SKIN:Bang('!SetOption', 'MeterFcDay' .. i, 'Text', day)
       SKIN:Bang('!SetOption', 'MeterFcTemp' .. i, 'Text', hi .. '[\\x00B0] ' .. lo .. '[\\x00B0]')
-      for _, m in ipairs({ 'MeterFcIcon', 'MeterFcDay', 'MeterFcTemp' }) do
-        setTip(m .. i, day .. ': ' .. fdesc .. ', high ' .. hi .. ' / low ' .. lo)
-      end
+      setTip('MeterFcTip' .. i, day .. ': ' .. fdesc .. ', high ' .. hi .. ' / low ' .. lo)
       shown = shown + 1
     end
   end
