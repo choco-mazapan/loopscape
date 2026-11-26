@@ -69,11 +69,13 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and No
 | **System** | Processor and memory use, and free space on drive C:. |
 | **Calendar** | This month with today circled. Scroll over it to see other months. The week starts on the day set in Windows. |
 
-**Placement.** Each wallpaper style suggests a calm spot for the widgets, and they move there when the style changes (Settings → Rotation → *Move widgets with wallpaper*). Drop a widget near a screen spot, or next to another widget's edge or corners, and it snaps there; anywhere else it lines up on a grid. Widgets stacked on each other move together and share one width. Settings → Widgets has switches for snapping, matching widths, and how far the bottom spots sit from the taskbar.
+**Placement.** Each wallpaper style suggests a calm spot for the widgets, and they move there when the style changes (Settings → Rotation → *Move widgets with wallpaper*). Drop a widget near a screen spot, or next to another widget's edge or corners, and it snaps there; anywhere else it lines up on a grid. Widgets stacked on each other move together and share one width. Settings → Widgets has switches for snapping, matching widths, and the height of the bottom snap spots (above the taskbar, over it, at the screen edge, or any number of pixels). It also sets the clock's date format.
 
 **Views.** Middle-click a widget, or right-click it, to pick a view. The Clock, for example, has Full, Simple, Compact and Time only, and Network has Full, Simple and Speeds.
 
-**Readability.** Settings → Look controls how the text stands out from the wallpaper: a text boost from a soft shadow to a bold outline, text colour that adapts to the wallpaper, a tinted panel behind the text, and pills behind each line.
+**Readability.** Settings → Look controls how the text stands out from the wallpaper. *Panel darkness* puts a dark box behind each widget. With the panel off, the text can sit on pills and turn light or dark to suit the wallpaper. *Text boost* adds anything from a soft shadow to a bold outline.
+
+**Profiles.** Settings → Profiles saves everything in the panel, plus each widget's view, to one of three slots. Load a slot to switch back to that setup.
 
 ## Using Loopscape
 
@@ -106,6 +108,8 @@ Click the Loopscape tray icon to open the widgets' Settings panel, or right-clic
 
 - If you installed with the setup program, it opens the [Releases](https://github.com/choco-mazapan/loopscape/releases) page so you can download the newest installer.
 - If you run Loopscape from a git clone of this repository (see [Building from source](#building-from-source)), it opens a window that lists the new changes to Loopscape and its widgets, with this PC's version and the new one. **Update** turns on once GitHub reports that the new version passed its build checks, which takes a few minutes after a change. Press it to get them: a progress bar follows the rebuild, and the window then shows what was updated. Changes only to files Loopscape doesn't use, such as this README, the screenshots or the installer, aren't listed and don't count as an update.
+
+  After it has checked once, the tray menu and Settings → Look show the result: *Loopscape is up to date* with this PC's version, or how many new changes are waiting. The result is from the last time you chose *Update Loopscape*; Loopscape doesn't check by itself.
 
 ## Make your own style with Claude
 
@@ -158,7 +162,7 @@ This section is for developers. You don't need any of it to use Loopscape.
 
 ### Run from a clone
 
-Clone the repository and run `.\sync.ps1`. After that, *Update Loopscape* runs `update.ps1`, which fetches `origin/main`, lists the new commits and asks the GitHub API whether the jobs in `.github/workflows/check.yml` passed on that exact commit. It installs nothing that failed or wasn't checked, and it refuses an `origin` that isn't on GitHub unless you run `update.ps1 -SkipCheck`. After you press **Update**, it fast-forwards the clone to the checked commit, runs `sync.ps1 -Progress` and shows the result (details in `%USERPROFILE%\Loopscape\update.log`). If the clone has local changes or is on another branch, the window says so, and Update sets them aside with `git stash` and switches to `main`. Run `git stash pop` to bring the changes back.
+Clone the repository and run `.\sync.ps1`. After that, *Update Loopscape* runs `update.ps1`, which fetches `origin/main`, lists the new commits and asks the GitHub API whether the jobs in `.github/workflows/check.yml` passed on that exact commit. It installs nothing that failed or wasn't checked, and it refuses an `origin` that isn't on GitHub unless you run `update.ps1 -SkipCheck`. After you press **Update**, it fast-forwards the clone to the checked commit, runs `sync.ps1 -Progress` and shows the result (details in `%USERPROFILE%\Loopscape\update.log`). It saves what it found in `%LOCALAPPDATA%\Loopscape\updatestatus.txt` for the tray menu and the Settings panel; `sync.ps1` deletes that file when it installs a different commit, so a manual `git pull` and sync never leave a stale *up to date*. If the clone has local changes or is on another branch, the window says so, and Update sets them aside with `git stash` and switches to `main`. Run `git stash pop` to bring the changes back.
 
 Versions are the last `v` tag plus the number of commits since it (`v1.0.0` plus 45 commits is 1.0.0.45). `update.ps1 -DryRun` changes nothing.
 

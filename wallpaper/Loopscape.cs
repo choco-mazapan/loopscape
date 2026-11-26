@@ -87,7 +87,8 @@ static class Loopscape
     // Settings panel keys (Settings.inc) that override Loopscape.ini keys when set
     static readonly string[][] PanelKeys = {
         new[] { "WallExclude", "exclude" }, new[] { "WallRotateMinutes", "rotateMinutes" }, new[] { "WallNight", "nightMode" },
-        new[] { "WallWeather", "weatherMode" }, new[] { "WallOnBattery", "onBattery" }, new[] { "WallPauseCovered", "pauseWhenCovered" } };
+        new[] { "WallWeather", "weatherMode" }, new[] { "WallOnBattery", "onBattery" }, new[] { "WallPauseCovered", "pauseWhenCovered" },
+        new[] { "WallAlwaysAnimate", "alwaysAnimate" } };
 
     static void ReadIni(string path, Dictionary<string, string> into)
     {
@@ -1148,12 +1149,27 @@ static class Loopscape
         t.SetApartmentState(ApartmentState.STA);
         t.Start();
     }
+    static UpdateInfo tipStatus;
+    static DateTime tipStatusRead = DateTime.MinValue;
     static void UpdateTrayTip()
     {
         try
         {
             string s = string.IsNullOrEmpty(Playing) ? "" : Pretty(StyleName(Playing));
             string tip = s.Length > 0 ? "Loopscape - " + s : "Loopscape";
+            // second line: what the last Update Loopscape found (clone installs only; see UpdateStatus)
+            // MouseMove fires many times a second over the icon: read the files at most every few seconds
+            if ((DateTime.UtcNow - tipStatusRead).TotalSeconds > 5)
+            {
+                tipStatus = UpdateScript() != null ? UpdateStatus() : null;
+                tipStatusRead = DateTime.UtcNow;
+            }
+            UpdateInfo info = tipStatus;
+            if (info != null)
+            {
+                string line = info.UpToDate ? "Up to date (" + info.Version + ")" : "Update available (" + info.Count + " new)";
+                if (tip.Length + 1 + line.Length <= 63) tip += "\n" + line;
+            }
             if (tip.Length > 63) tip = tip.Substring(0, 63);
             if (tray.Text != tip) tray.Text = tip;
         }
@@ -1214,15 +1230,20 @@ static class Loopscape
         pause.Checked = userPaused;
         pause.Click += delegate { userPaused = !userPaused; Wake.Set(); Log("tray: " + (userPaused ? "pause" : "play")); };
         menu.Items.Add(pause);
-        // Saved as alwaysAnimate= in Loopscape.ini; the main loop picks it up through its settings reload
-        bool always = ini.TryGetValue("alwaysAnimate", out v) && IsTrue(v);
+        // Same setting as Settings panel > Rotation > Always animate: WallAlwaysAnimate in Settings.inc, which wins over
+        // alwaysAnimate= in Loopscape.ini (where it lived before the panel had it). Saved to Settings.inc when the
+        // widgets are installed, so the panel shows the change; the main loop picks it up through its settings reload.
+        string incPath = Path.Combine(Res, "Settings.inc");
+        bool always = panel.TryGetValue("WallAlwaysAnimate", out v) && v.Trim().Length > 0 ? IsTrue(v)
+                    : ini.TryGetValue("alwaysAnimate", out v) && IsTrue(v);
         var force = new System.Windows.Forms.ToolStripMenuItem("Always animate");
         force.Checked = always;
         force.ToolTipText = "Keep the wallpaper moving on battery and behind full-screen windows (uses more battery)";
         force.Click += delegate
         {
             if (!always) userPaused = false;   // turning it on also resumes a paused wallpaper
-            SetLine(Path.Combine(Dir, "Loopscape.ini"), "alwaysAnimate", always ? "false" : "true", true);
+            if (File.Exists(incPath)) SetLine(incPath, "WallAlwaysAnimate", always ? "0" : "1", false);
+            else SetLine(Path.Combine(Dir, "Loopscape.ini"), "alwaysAnimate", always ? "false" : "true", true);
             Log("tray: always animate " + (always ? "off" : "on"));
         };
         menu.Items.Add(force);
@@ -1273,10 +1294,25 @@ static class Loopscape
         autostart.Click += delegate { SetStartWithWindows(!StartsWithWindows()); };
         menu.Items.Add(autostart);
         bool updating = UpdateRunning();
+        bool fromClone = UpdateScript() != null;
+        UpdateInfo info = fromClone && !updating ? UpdateStatus() : null;
         var update = new System.Windows.Forms.ToolStripMenuItem(updating ? "Updating Loopscape..." : "Update Loopscape");
         update.Enabled = !updating;
-        update.ToolTipText = UpdateScript() != null ? "Get the latest version from GitHub, rebuild it and refresh the widgets"
-                                                    : "Open the Releases page to download the newest installer";
+        update.ToolTipText = fromClone ? "Get the latest version from GitHub, rebuild it and refresh the widgets"
+                                       : "Open the Releases page to download the newest installer";
+        if (info != null && info.UpToDate)
+        {
+            update.Text = "Loopscape is up to date";
+            update.ShortcutKeyDisplayString = info.Version;
+            update.ToolTipText = "Checked GitHub " + info.CheckedText + ". Click to check again";
+        }
+        else if (info != null)
+        {
+            update.Text = "Update Loopscape (" + info.Count + " new)";
+            update.ShortcutKeyDisplayString = info.Latest;
+            update.ToolTipText = info.Count + " new change" + (info.Count == 1 ? "" : "s") + " on GitHub when checked " + info.CheckedText +
+                                 ". Click to see them and update";
+        }
         update.Click += delegate { ThreadPool.QueueUserWorkItem(delegate { StartUpdate("tray"); }); };
         menu.Items.Add(update);
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
@@ -1369,6 +1405,43 @@ static class Loopscape
             if (!ini.TryGetValue("sourceFolder", out v) || v.Length == 0) return null;
             string script = Path.Combine(Environment.ExpandEnvironmentVariables(v), "update.ps1");
             return File.Exists(script) ? script : null;
+        }
+        catch { return null; }
+    }
+    // What update.ps1 found the last time it ran (%LOCALAPPDATA%\Loopscape\updatestatus.txt). It describes the copy
+    // installed on this PC, so it's shown until the next Update Loopscape; sync.ps1 deletes it when it installs a
+    // different commit by hand. null when there's no file or it can't be read.
+    internal class UpdateInfo
+    {
+        public bool UpToDate;
+        public string Version = "", Latest = "", CheckedText = "";
+        public int Count;
+    }
+    static UpdateInfo UpdateStatus()
+    {
+        try
+        {
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            ReadIni(Path.Combine(State, "updatestatus.txt"), d);
+            string st, v;
+            if (!d.TryGetValue("state", out st) || (st != "uptodate" && st != "available")) return null;
+            var info = new UpdateInfo();
+            info.UpToDate = st == "uptodate";
+            if (d.TryGetValue("version", out v)) info.Version = v;
+            if (d.TryGetValue("latest", out v)) info.Latest = v;
+            if (d.TryGetValue("count", out v)) int.TryParse(v, out info.Count);
+            if (!info.UpToDate && info.Count <= 0) return null;
+            DateTime when;
+            if (d.TryGetValue("checked", out v) && DateTime.TryParseExact(v, "yyyy-MM-dd HH:mm",
+                    System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out when))
+            {
+                string time = when.ToString("t");
+                info.CheckedText = when.Date == DateTime.Today ? "today at " + time
+                                 : when.Date == DateTime.Today.AddDays(-1) ? "yesterday at " + time
+                                 : "on " + when.ToString("d MMM") + (when.Year != DateTime.Today.Year ? when.ToString(" yyyy") : "");
+            }
+            else info.CheckedText = "earlier";
+            return info;
         }
         catch { return null; }
     }

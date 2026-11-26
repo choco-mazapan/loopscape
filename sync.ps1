@@ -141,6 +141,21 @@ if (-not $DryRun -and $changed.Count -gt 0 -and (Test-Path $rm)) {
     if ($rmText -match "(?ms)^\[$([regex]::Escape($cfg))\]\s*\r?\nActive=([1-9])") { & $rm !Refresh $cfg }
   }
 }
+# The tray menu and the Settings panel say "up to date" from what update.ps1 last found (updatestatus.txt). That was
+# about one commit: once this installs another one (a git pull or checkout by hand), the saved status no longer holds.
+# update.ps1 saves a new one after it runs this.
+$statusFile = Join-Path $env:LOCALAPPDATA 'Loopscape\updatestatus.txt'
+if (-not $DryRun -and (Test-Path $statusFile) -and (Test-Path (Join-Path $root '.git'))) {
+  # when git can't say which commit this is, drop the status too: better no "up to date" than a wrong one
+  $head = $null
+  try {
+    $git = (Get-Command git.exe -ErrorAction SilentlyContinue).Source
+    if (-not $git) { $git = "$env:ProgramFiles\Git\cmd\git.exe" }
+    if (Test-Path $git) { $head = (& $git -C $root rev-parse HEAD | Select-Object -First 1) }
+  } catch { }
+  $saved = (Get-Content -LiteralPath $statusFile | Where-Object { $_ -like 'commit=*' } | Select-Object -First 1) -replace '^commit=', ''
+  if (-not $head -or $saved -ne $head) { Remove-Item -LiteralPath $statusFile -Force -ErrorAction SilentlyContinue }
+}
 if ($changed.Count -eq 0) { Say 'Everything is already up to date.' }
 else { Say "Updated:"; $changed | ForEach-Object { "  $_" } }
 Step 100 'Done'

@@ -217,7 +217,7 @@ end
 -- Space between stacked widgets. With the panel tint off their padding is invisible, so they overlap a little on
 -- purpose (SnapGapClear is negative) to bring the text lines together.
 local function gap()
-  return (num('PanelAlpha', 0) == 0) and num('SnapGapClear', -28) or num('SnapGap', 12)
+  return (num('PanelAlpha', 0) == 0) and num('SnapGapClear', -16) or num('SnapGap', 12)
 end
 
 -- Whether rect a (x, y, w, h) covers rect r. Overlap up to the stacking overlap above (plus a few pixels) doesn't
