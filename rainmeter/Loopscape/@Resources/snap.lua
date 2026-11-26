@@ -77,6 +77,72 @@ local function num(name, default)
   return tonumber(SKIN:GetVariable(name, tostring(default))) or default
 end
 local function key(config) return (config:gsub('[^%w]', '_')) end
+local function quoted(s) return '"' .. (s:gsub('\\', '\\\\')) .. '"' end
+
+-- ---------- which widgets are running ----------
+-- Bangs aimed at a widget that is switched off (or still loading) only fill Rainmeter's log with warnings, so the
+-- widgets talk only to peers they know are running (live). A widget that loads says Hello to the widgets
+-- Rainmeter.ini lists as active; they add it, and it adds them. One that closes says so (Closing / PeerGone).
+local live = {}
+local helloPending = true
+local closed = false      -- Closing() has run: talk to nobody
+
+-- Configs that Rainmeter.ini lists as switched on (Active=<n>, 0 = off), lower-cased; nil if it can't be read.
+-- Rainmeter writes the file in UTF-16: dropping the zero bytes leaves the (ASCII) section names and keys readable.
+function activeConfigs()
+  local f = io.open(SKIN:GetVariable('SETTINGSPATH', '') .. 'Rainmeter.ini', 'rb')
+  if not f then return nil end
+  local text = (f:read('*a') or ''):gsub('%z', ''):gsub('^\255\254', '')
+  f:close()
+  local out, sec = {}, nil
+  for line in text:gmatch('[^\r\n]+') do
+    local s = line:match('^%[(.-)%]%s*$')
+    if s then sec = s:lower()
+    elseif sec then
+      local n = line:match('^Active%s*=%s*(%d+)')
+      if n then out[sec] = n ~= '0' end
+    end
+  end
+  if next(out) == nil then return nil end   -- nothing recognisable: don't guess
+  return out
+end
+
+local function livePeers()
+  local out = {}
+  for _, p in ipairs(peers) do if live[p] then out[#out + 1] = p end end
+  return out
+end
+
+-- Run about a second after loading, not during the load itself: when Rainmeter starts (or refreshes all skins) it
+-- loads the widgets one after another, and a widget listed as active may not have its script yet. A peer counts as
+-- live once it answers (its Peer_ variable is filled, see noticeAnswers) or says Hello itself.
+local HELLO_AFTER = 0.8
+local function sayHello()
+  helloPending = false
+  local act = activeConfigs()
+  for _, p in ipairs(peers) do
+    if not act or act[p:lower()] then
+      SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Hello(' .. quoted(me) .. ')', p)
+    end
+  end
+end
+
+-- A peer that shared its position with us is running. (Its PeerChanged call can be dropped while our script is
+-- busy, but the variable it sets always arrives.)
+local function noticeAnswers()
+  if closed then return end
+  local new = false
+  for _, p in ipairs(peers) do
+    if not live[p] and SKIN:GetVariable('Peer_' .. key(p), '') ~= '' then live[p] = true; new = true end
+  end
+  if new and SKIN:GetW() > 1 then Broadcast() end   -- the newcomer gets our position too
+end
+
+-- A widget that just loaded: from now on it gets our position; send it now (it may have loaded after us)
+function Hello(from)
+  if from and not closed then live[from] = true end
+  Broadcast()
+end
 
 -- The widgets' meters only update when asked (DefaultUpdateDivider=-1), so there is no later tick to catch up.
 -- A change that can move or resize text needs two passes: the panel and the text pills come before the text they
@@ -242,10 +308,10 @@ function Broadcast(bx, by)
     SKIN:Bang('!WriteKeyValue', 'Variables', 'SnapSize', w .. ',' .. h)
   end
   local s = string.format('%d,%d,%d,%d,%s,%d', bx or SKIN:GetX(), by or SKIN:GetY(), w, h, attach and attach.peer or '', lastNat)
-  for _, p in ipairs(peers) do
+  for _, p in ipairs(livePeers()) do
     SKIN:Bang('!SetVariable', 'Peer_' .. key(me), s, p)
     -- let the other widget follow/match now rather than on its next tick
-    SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'PeerChanged("' .. me:gsub('\\', '\\\\') .. '")', p)
+    SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'PeerChanged(' .. quoted(me) .. ')', p)
   end
 end
 
@@ -255,16 +321,26 @@ end
 
 -- ---------- widgets closing ----------
 -- A widget that closes (hidden from Settings, unloaded, or refreshing) runs SnapOnClose (Snap.inc), which calls
--- PeerGone() here. Its Peer_ variable would otherwise stay behind: widgets stacked on it would keep following a widget
--- that isn't there, and its empty spot would still block snap targets. So on the next tick (when the closing widget
--- is really gone) we clear all Peer_ variables and ask everyone to share their position again; whoever hasn't
--- after GONE_WAIT seconds is gone (a refreshing widget is back well within that). The answers are checked through
--- the variables: a peer's PeerChanged call can arrive while our script is still running, and is then dropped.
+-- Closing() in its own script, which calls PeerGone() in the running widgets. Its Peer_ variable would otherwise stay
+-- behind: widgets stacked on it would keep following a widget that isn't there, and its empty spot would still block
+-- snap targets. So on the next tick (when the closing widget is really gone) we clear all Peer_ variables and ask
+-- everyone to share their position again; whoever hasn't after GONE_WAIT seconds is gone (a refreshing widget is
+-- back well within that). The answers are checked through the variables: a peer's PeerChanged call can arrive while
+-- our script is still running, and is then dropped.
 local GONE_WAIT = 1.5
 local gone = {}       -- last rect of each widget that closed: a widget stacked on it takes its place
 
-function PeerGone()
+function PeerGone(from)
+  -- (it says Hello again if it is only refreshing; its variable goes too, or noticeAnswers would take it back)
+  if from then live[from] = nil; SKIN:Bang('!SetVariable', 'Peer_' .. key(from), '') end
   if not recheck then recheck = {} end
+end
+
+function Closing()
+  if not me then return end
+  for _, p in ipairs(livePeers()) do SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'PeerGone(' .. quoted(me) .. ')', p) end
+  -- (the Settings panel calls this just before switching us off: stay quiet until we're gone)
+  live, helloPending, closed = {}, false, true
 end
 
 local function checkGone()
@@ -273,7 +349,7 @@ local function checkGone()
     recheck.old = peerRects(true)
     recheck.at = os.clock()
     for _, p in ipairs(peers) do SKIN:Bang('!SetVariable', 'Peer_' .. key(p), '') end
-    for _, p in ipairs(peers) do SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Broadcast()', p) end
+    for _, p in ipairs(livePeers()) do SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Broadcast()', p) end
     return
   end
   if os.clock() - recheck.at < GONE_WAIT then return end
@@ -281,14 +357,14 @@ local function checkGone()
   recheck = nil
   local rects = peerRects(true)
   for p, r in pairs(old) do
-    if not rects[p] then dbg(p .. ' closed'); gone[p] = r; still = math.max(still, STILL_TICKS) end
+    if not rects[p] then dbg(p .. ' closed'); gone[p] = r; live[p] = nil; still = math.max(still, STILL_TICKS) end
   end
 end
 
 -- Called by a peer right after it shared a new position/size: react immediately
 local inPeerChanged = false
 function PeerChanged(from)
-  if from then gone[from] = nil end
+  if from then gone[from] = nil; if not closed then live[from] = true end end
   if dragging or inPeerChanged then return end   -- (no chain reaction back into us: the next tick catches up)
   inPeerChanged = true
   still = math.max(still, STILL_TICKS)
@@ -439,16 +515,20 @@ function Initialize()
   local a = SKIN:GetVariable('SnapAttach', '')
   local ap, ar = a:match('^(.-)|(%a+)$')
   if ap and ap ~= '' then attach = { peer = ap, rel = ar } end
-  SKIN:Bang('!ActivateConfig', GUIDES, 'SnapGuides.ini')
+  -- the guides overlay: switch it on unless Rainmeter already has it (on, or about to load it at startup)
+  local act = activeConfigs()
+  if not (act and act[GUIDES:lower()]) then SKIN:Bang('!ActivateConfig', GUIDES, 'SnapGuides.ini') end
   -- the saved view is applied on the first Update: meters aren't ready yet during Initialize
   viewPending = (tonumber(SKIN:GetVariable('View', '0')) or 0) > 0
-  -- ask the others for their positions (they may have loaded before us)
-  for _, p in ipairs(peers) do SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Broadcast()', p) end
+  -- say Hello to the others (and get their positions) once loading is over: see sayHello
+  helloPending = true
 end
 
 function Update()
+  if helloPending and os.clock() - loadedAt >= HELLO_AFTER then sayHello() end
   if viewPending then viewPending = false; applyView() end
   checkGone()
+  noticeAnswers()
   checkTheme()
   checkPendingMove()
   checkPlacement()
@@ -512,7 +592,7 @@ function Update()
       tx, ty = t.x, t.y
       if t.peer then
         attach = { peer = t.peer, rel = t.rel }
-        SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'DetachFrom("' .. me:gsub('\\', '\\\\') .. '")', t.peer)
+        if live[t.peer] then SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'DetachFrom(' .. quoted(me) .. ')', t.peer) end
       else
         attach = nil
       end
@@ -743,7 +823,7 @@ function startWallFade(start, dur, tx, ty)
   wallFade = { start = start, dur = dur, tx = tx, ty = ty, moved = false }
   if tx then wallFade.notify = writeMoveFile(tx, ty) end
   -- widgets stacked on us move when we do, so they fade on the same clock (one Rainmeter process: os.clock is shared)
-  for _, p in ipairs(peers) do
+  for _, p in ipairs(livePeers()) do
     local r = peerRects(true)[p]
     if r and r[5] == me then
       SKIN:Bang('!CommandMeasure', 'MeasureSnap', string.format('FollowFade(%.3f, %.3f)', start, dur), p)

@@ -203,13 +203,42 @@ end
 -- the weather re-fetches, the Wi-Fi details reset and the widgets flicker). Settings.inc is still updated,
 -- so the value also holds after the next refresh/restart.
 local CLOCK = 'Loopscape\\Clock'
+
+-- Widgets that are switched on (Rainmeter.ini Active=<n>, 0 = off). Bangs to a widget that is off only add
+-- warnings to Rainmeter's log. If Rainmeter.ini can't be read, every widget counts as on.
+-- (Rainmeter writes the file in UTF-16: dropping the zero bytes leaves the ASCII section names and keys readable.)
+local function running()
+  local f = io.open(SKIN:GetVariable('SETTINGSPATH', '') .. 'Rainmeter.ini', 'rb')
+  local act, sec, found = {}, nil, false
+  if f then
+    local text = (f:read('*a') or ''):gsub('%z', ''):gsub('^\255\254', '')
+    f:close()
+    for line in text:gmatch('[^\r\n]+') do
+      local s = line:match('^%[(.-)%]%s*$')
+      if s then sec = s:lower()
+      elseif sec then
+        local n = line:match('^Active%s*=%s*(%d+)')
+        if n then act[sec] = n ~= '0'; found = true end
+      end
+    end
+  end
+  return function(w) return not found or act[w:lower()] == true end
+end
+
 local function apply(var, value)
   local shown = var:match('^Show(%w+)$')
   if shown then
     for _, w in ipairs(WIDGET_TILES) do
       if w[1] == shown then
         if value == '1' then SKIN:Bang('!ActivateConfig', 'Loopscape\\' .. shown, shown .. '.ini')
-        else SKIN:Bang('!DeactivateConfig', 'Loopscape\\' .. shown) end
+        else
+          -- tell the others first: Rainmeter drops the widget from its list at once but runs its OnCloseAction
+          -- only after the fade-out, and bangs sent to it in between are logged as warnings
+          if running()('Loopscape\\' .. shown) then
+            SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Closing()', 'Loopscape\\' .. shown)
+          end
+          SKIN:Bang('!DeactivateConfig', 'Loopscape\\' .. shown)
+        end
       end
     end
     return
@@ -220,7 +249,11 @@ local function apply(var, value)
   end
   -- Everything else is a variable the widgets use with DynamicVariables: set it and redraw. The widgets' meters
   -- only update when asked, so update them twice: their panel and pills come before the text they wrap.
-  for _, w in ipairs(WIDGETS) do
+  -- (A widget that is off reads Settings.inc when it is switched on.)
+  local on = running()
+  local shownWidgets = {}
+  for _, w in ipairs(WIDGETS) do if on(w) then shownWidgets[#shownWidgets + 1] = w end end
+  for _, w in ipairs(shownWidgets) do
     SKIN:Bang('!SetVariable', var, value, w)
     SKIN:Bang('!UpdateMeasure', 'MeasureNaturalWidth', w)   -- not '*': that would fire the weather/Wi-Fi timers
     SKIN:Bang('!UpdateMeter', '*', w)
@@ -231,24 +264,31 @@ local function apply(var, value)
   end
   if var == 'SnapBottomMargin' then
     -- move widgets parked on a bottom spot (and anything stacked on them) to the new height
-    for _, w in ipairs(WIDGETS) do SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Resnap()', w) end
+    for _, w in ipairs(shownWidgets) do SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Resnap()', w) end
   end
+  local SUN, RAIN = 'Loopscape\\SunMoon', 'Loopscape\\Rain'
   if var == 'WeatherUnit' or var == 'WeatherLocation' or var == 'WeatherCity' then
     -- show the weather in the new unit / for the new place (only the clock shows weather). A unit change reuses
     -- WeatherFetch's cached result; a new location fetches. The Parameter picks the variables up (set above)
     -- through DynamicVariables
-    SKIN:Bang('!UpdateMeasure', 'MeasureWeatherRun', CLOCK)
-    SKIN:Bang('!CommandMeasure', 'MeasureWeatherRun', 'Run', CLOCK)
+    if on(CLOCK) then
+      SKIN:Bang('!UpdateMeasure', 'MeasureWeatherRun', CLOCK)
+      SKIN:Bang('!CommandMeasure', 'MeasureWeatherRun', 'Run', CLOCK)
+    end
     -- the other widgets that read WeatherFetch: Sun & Moon (sun times), Rain
-    SKIN:Bang('!UpdateMeasure', 'MeasureSunRun', 'Loopscape\\SunMoon')
-    SKIN:Bang('!CommandMeasure', 'MeasureSunRun', 'Run', 'Loopscape\\SunMoon')
-    SKIN:Bang('!UpdateMeasure', 'MeasureRainRun', 'Loopscape\\Rain')
-    SKIN:Bang('!CommandMeasure', 'MeasureRainRun', 'Run', 'Loopscape\\Rain')
+    if on(SUN) then
+      SKIN:Bang('!UpdateMeasure', 'MeasureSunRun', SUN)
+      SKIN:Bang('!CommandMeasure', 'MeasureSunRun', 'Run', SUN)
+    end
+    if on(RAIN) then
+      SKIN:Bang('!UpdateMeasure', 'MeasureRainRun', RAIN)
+      SKIN:Bang('!CommandMeasure', 'MeasureRainRun', 'Run', RAIN)
+    end
   end
   if var == 'ClockFormat' then
     -- times shown by the scripts (not by a Time measure)
-    SKIN:Bang('!UpdateMeasure', 'MeasureSunMoon', 'Loopscape\\SunMoon')
-    SKIN:Bang('!UpdateMeasure', 'MeasureRain', 'Loopscape\\Rain')
+    if on(SUN) then SKIN:Bang('!UpdateMeasure', 'MeasureSunMoon', SUN) end
+    if on(RAIN) then SKIN:Bang('!UpdateMeasure', 'MeasureRain', RAIN) end
   end
 end
 local function setValue(var, value)
