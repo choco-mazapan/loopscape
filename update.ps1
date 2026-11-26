@@ -5,22 +5,26 @@
 #      version and the new one. Changes only to files Loopscape doesn't use (README, screenshots, installer, CI, the
 #      Claude skill, style-rendering scripts: see $appPaths) aren't listed, and if there are no others it says
 #      Loopscape is up to date and leaves the clone alone
-#   2. waits for you to press Update. If the clone has local changes or is on another branch than main, the window
+#   2. asks GitHub whether the new version passed its build checks (the jobs in .github/workflows/check.yml) and
+#      only then lets you press Update. While GitHub is still checking it (a few minutes after a merge) the window
+#      waits and asks again; a failed check, or a clone whose origin isn't on GitHub, leaves Update greyed out
+#   3. waits for you to press Update. If the clone has local changes or is on another branch than main, the window
 #      says so first: Update sets the changes aside with git stash (git stash pop brings them back) and switches to main
-#   3. fast-forwards to origin/main and runs sync.ps1, which rebuilds what changed, restarts Loopscape and refreshes
+#   4. fast-forwards to the commit that was checked and runs sync.ps1, which rebuilds what changed, restarts Loopscape and refreshes
 #      the widgets, with a progress bar
-#   4. shows what was updated on this PC
+#   5. shows what was updated on this PC
 # Everything it runs goes to %USERPROFILE%\Loopscape\update.log. Versions are <last v tag>.<commits since it that
 # change Loopscape's files> (v1.0.0 plus 45 such commits = 1.0.0.45).
 #   powershell -ExecutionPolicy Bypass -File .\update.ps1
 #   .\update.ps1 -DryRun                      changes nothing: no stash, no merge, and sync.ps1 -DryRun
 #   .\update.ps1 -DryRun -ScreenshotDir C:\x  also presses Update by itself and saves a picture of each screen
-param([switch]$DryRun, [string]$ScreenshotDir)
+#   .\update.ps1 -SkipCheck                   doesn't ask GitHub about the build checks (offline mirrors, forks without CI)
+param([switch]$DryRun, [string]$ScreenshotDir, [switch]$SkipCheck)
 $ErrorActionPreference = 'Continue'   # git writes progress to stderr; failures are checked through exit codes
 $root = $PSScriptRoot
 $log  = Join-Path $env:USERPROFILE 'Loopscape\update.log'
 $ellipsis = [char]0x2026
-Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Net.Http
 
 # One update at a time. Loopscape greys out its menu item while this mutex exists.
 $created = $false
@@ -94,6 +98,55 @@ function Get-Version($ref) {
   (Invoke-Git rev-parse --short $ref).Out | Select-Object -First 1
 }
 
+# ---------------- GitHub build checks ----------------
+# The jobs in .github/workflows/check.yml. A version is installed only when GitHub ran all of them on that exact
+# commit and they passed, so a change that doesn't compile or parse never reaches this PC through Update.
+$requiredChecks = @('Build and PowerShell', 'Lua and Python')
+$checkWaitMinutes = 15   # after a merge GitHub needs a few minutes; give up waiting after this
+$checkRetrySeconds = 30  # unauthenticated GitHub API calls are limited to 60 an hour
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$http = New-Object Net.Http.HttpClient
+$http.Timeout = [TimeSpan]::FromSeconds(20)
+$http.DefaultRequestHeaders.UserAgent.ParseAdd('Loopscape-Updater')
+$http.DefaultRequestHeaders.Accept.ParseAdd('application/vnd.github+json')
+
+# "owner/repo" from a GitHub remote URL (https or ssh), or $null for anything else
+function Get-GitHubRepo($url) {
+  if ($url -match '^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+)/([\w.-]+?)(?:\.git)?/?$') { return "$($Matches[1])/$($Matches[2])" }
+  $null
+}
+
+# Reads GitHub's answer about one commit's check runs: passed, pending (not created or not finished yet) or failed
+function Read-Checks($task) {
+  if ($task.IsFaulted -or $task.IsCanceled) {
+    $why = if ($task.Exception) { $task.Exception.GetBaseException().Message } else { 'timed out' }
+    Log "  check request failed: $why"
+    return @{ State = 'error'; Text = "Couldn't reach GitHub to check the new version ($why)." }
+  }
+  $resp = $task.Result
+  $body = $resp.Content.ReadAsStringAsync().Result
+  Log "  HTTP $([int]$resp.StatusCode)"
+  if (-not $resp.IsSuccessStatusCode) {
+    $hint = if ([int]$resp.StatusCode -eq 403 -or [int]$resp.StatusCode -eq 429) { ' GitHub limits how often it can be asked; try again in an hour.' } else { '' }
+    return @{ State = 'error'; Text = "GitHub didn't answer the build check request (HTTP $([int]$resp.StatusCode)).$hint" }
+  }
+  $runs = @((ConvertFrom-Json $body).check_runs)
+  $waiting = @(); $failed = @()
+  foreach ($name in $requiredChecks) {
+    # a re-run adds a new check run with the same name: the newest one counts
+    $run = $runs | Where-Object { $_.name -eq $name } | Sort-Object { [long]$_.id } -Descending | Select-Object -First 1
+    if (-not $run) { $waiting += $name; Log "  $name`: not started" }
+    else {
+      Log "  $name`: $($run.status) $($run.conclusion)"
+      if ($run.status -ne 'completed') { $waiting += $name }
+      elseif ($run.conclusion -ne 'success') { $failed += "$name ($($run.conclusion))" }
+    }
+  }
+  if ($failed.Count) { return @{ State = 'failed'; Text = "This version didn't pass its build checks on GitHub: $($failed -join ', '). It isn't installed; the next fix on GitHub will be." } }
+  if ($waiting.Count) { return @{ State = 'pending' } }
+  @{ State = 'passed' }
+}
+
 # ---------------- window ----------------
 # Sizes are for 96 DPI. They're scaled to the screen's DPI by hand after the layout (WinForms' own AutoScaleMode scaled
 # some controls twice at 125% and left the list's columns alone).
@@ -148,6 +201,8 @@ $progress.Style = 'Marquee'; $progress.MarqueeAnimationSpeed = 30; $progress.Vis
 $form.Controls.Add($progress)
 $status = New-Label 22 340 516 22 $null
 $status.ForeColor = $dim
+$checkLine = New-Label 22 378 516 40 $null   # what GitHub said about the new version's build checks
+$checkLine.Visible = $false
 
 $logLink = New-Object Windows.Forms.LinkLabel
 $logLink.Text = 'Open the log'; $logLink.Location = New-Object Drawing.Point(22, 430); $logLink.AutoSize = $true
@@ -173,7 +228,8 @@ if ($scale -ne 1) {
   foreach ($col in $list.Columns) { $col.Width = [int]($col.Width * $scale) }
 }
 
-$state = @{ Step = 'fetch'; Busy = $true; Proc = $null; Stashed = $false; Branch = ''; Dirty = @(); NewVersion = '' }
+$state = @{ Step = 'fetch'; Busy = $true; Proc = $null; Stashed = $false; Branch = ''; Dirty = @(); NewVersion = ''
+           Target = ''; Repo = $null; Http = $null; NextCheck = [datetime]::MinValue; CheckStarted = [datetime]::MinValue }
 $form.add_FormClosing({ param($s, $e) if ($state.Busy -and $state.Step -ne 'fetch') { $e.Cancel = $true } })
 $cancel.add_Click({ $form.Close() })
 
@@ -193,7 +249,7 @@ function Save-Screenshot($name) {
 function Show-Result($heading, $text, $failed) {
   $state.Busy = $false; $state.Step = 'end'
   $title.Text = $heading
-  $list.Visible = $false; $note.Visible = $false; $progress.Visible = $false; $status.Visible = $false
+  $list.Visible = $false; $note.Visible = $false; $progress.Visible = $false; $status.Visible = $false; $checkLine.Visible = $false
   $details.Text = $text -replace "`r?`n", "`r`n"; $details.Visible = $true
   $logLink.Visible = $true
   $primary.Text = 'Close'; $primary.Enabled = $true; $cancel.Visible = $false; $primary.Left = $cancel.Left
@@ -220,10 +276,14 @@ function Show-Changes {
   $progress.Visible = $false; $status.Visible = $false
   $state.Branch = (Invoke-Git rev-parse --abbrev-ref HEAD).Out | Select-Object -First 1
   $state.Dirty  = @((Invoke-Git status --porcelain).Out | Where-Object { $_ })
+  # everything below (the list, the version, the build check and the merge) is about this one commit, so a push to
+  # GitHub while the window is open can't slip in unchecked
+  $state.Target = (Invoke-Git rev-parse origin/main).Out | Select-Object -First 1
+  $target = $state.Target
   $here = Get-Version HEAD
-  $state.NewVersion = Get-Version origin/main
-  $new = @((Invoke-Git log --no-merges '--format=%cs%x09%s' HEAD..origin/main '--' @appPaths).Out | Where-Object { $_ })
-  $all = @((Invoke-Git rev-list --no-merges HEAD..origin/main).Out | Where-Object { $_ })
+  $state.NewVersion = Get-Version $target
+  $new = @((Invoke-Git log --no-merges '--format=%cs%x09%s' "HEAD..$target" '--' @appPaths).Out | Where-Object { $_ })
+  $all = @((Invoke-Git rev-list --no-merges "HEAD..$target").Out | Where-Object { $_ })
   $other = [Math]::Max(0, $all.Count - $new.Count)   # commits that only touch files Loopscape doesn't use
   $otherText = "$other change$(if ($other -ne 1) { 's' }) to the README and other files Loopscape doesn't use"
   foreach ($c in $new) {
@@ -266,11 +326,66 @@ function Show-Changes {
     [void]$list.Items.Add($item)
   }
   $note.Text = $notes -join "`n"; $note.Visible = $notes.Count -gt 0
-  $state.Busy = $false; $state.Step = 'confirm'
-  $primary.Text = 'Update'; $primary.Enabled = $true
+  $state.Busy = $false
+  $primary.Text = 'Update'; $primary.Enabled = $false
   $form.Activate()
+  Begin-Verify
+}
+
+# ---- 2b. ask GitHub whether the new version passed its build checks; Update stays greyed out until it has ----
+function Show-CheckLine($text, $color) { $checkLine.Text = $text; $checkLine.ForeColor = $color; $checkLine.Visible = $true }
+function Begin-Verify {
+  $state.Step = 'verify'
+  if ($SkipCheck) { Log 'build check skipped (-SkipCheck)'; Allow-Update 'Not checked on GitHub (started with -SkipCheck).'; return }
+  $url = ((Invoke-Git remote get-url origin).Out | Select-Object -First 1)
+  $state.Repo = Get-GitHubRepo $url
+  if (-not $state.Repo) {
+    Block-Update "This clone gets its updates from $url, which isn't GitHub, so Loopscape can't check that the new version passed its build checks. To update anyway, run update.ps1 -SkipCheck in $root."
+    return
+  }
+  $state.CheckStarted = Get-Date
+  Request-Checks
+}
+function Request-Checks {
+  $url = "https://api.github.com/repos/$($state.Repo)/commits/$($state.Target)/check-runs?per_page=100"
+  Log "> GET $url"
+  $state.Http = $http.GetAsync($url)
+}
+# called from the timer while Step is 'verify'
+function Poll-Verify {
+  if (-not $state.Http) {
+    if ((Get-Date) -ge $state.NextCheck) { Request-Checks }
+    return
+  }
+  if (-not $state.Http.IsCompleted) { return }
+  $r = Read-Checks $state.Http
+  $state.Http = $null
+  switch ($r.State) {
+    'passed' { Allow-Update "$([char]0x2713) This version passed its build checks on GitHub." }
+    'pending' {
+      if (((Get-Date) - $state.CheckStarted).TotalMinutes -ge $checkWaitMinutes) {
+        Block-Update "GitHub hasn't finished checking this version after $checkWaitMinutes minutes. Try Update Loopscape again later."
+        return
+      }
+      Show-CheckLine "GitHub is still building and checking this version (usually a few minutes after a change). Update turns on once it passes$ellipsis" $dim
+      $state.NextCheck = (Get-Date).AddSeconds($checkRetrySeconds)
+    }
+    default { Block-Update $r.Text }
+  }
+}
+function Allow-Update($text) {
+  Show-CheckLine $text ([Drawing.Color]::FromArgb(16, 124, 16))
+  $state.Step = 'confirm'
+  $primary.Enabled = $true
   Save-Screenshot 'changes'
   if ($ScreenshotDir -and $DryRun) { $primary.PerformClick() }
+}
+function Block-Update($text) {
+  Log "not offering the update: $text"
+  Show-CheckLine $text ([Drawing.Color]::FromArgb(176, 0, 32))
+  $state.Step = 'blocked'
+  $primary.Enabled = $false; $cancel.Text = 'Close'
+  Save-Screenshot 'blocked'
 }
 
 # ---- 3. update: stash, switch to main, fast-forward, then sync.ps1 in the background ----
@@ -278,7 +393,7 @@ function Begin-Update {
   $state.Busy = $true; $state.Step = 'sync'
   $primary.Enabled = $false; $cancel.Enabled = $false
   $title.Text = "Updating Loopscape$ellipsis"
-  $note.Visible = $false
+  $note.Visible = $false; $checkLine.Visible = $false
   $progress.Style = 'Continuous'; $progress.Value = 0; $progress.Visible = $true; $status.Visible = $true
   function Set-Progress($v, $text) { $progress.Value = [Math]::Max(0, [Math]::Min(100, $v)); $status.Text = $text; $form.Refresh() }
   if (-not $DryRun) {
@@ -294,7 +409,7 @@ function Begin-Update {
       if ($r.Code -ne 0) { Fail ("Couldn't switch to the main branch, so nothing was updated." + (& $stashNote)); return }
     }
     Set-Progress 14 "Getting the new code$ellipsis"
-    $r = Invoke-Git merge --ff-only origin/main
+    $r = Invoke-Git merge --ff-only $state.Target
     if ($r.Code -ne 0) {
       Fail ("Your main branch has commits that aren't on GitHub, so it can't move to the latest version by itself. Run git status in $root to see them." + (& $stashNote))
       return
@@ -330,6 +445,7 @@ $primary.add_Click({
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 150
 $timer.add_Tick({
+  if ($state.Step -eq 'verify') { Poll-Verify; return }
   $p = $state.Proc
   if (-not $p) { return }
   Poll-Proc $p
