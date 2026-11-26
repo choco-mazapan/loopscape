@@ -283,7 +283,7 @@ A '[MeterWidgetsHead]'; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; 
 A 'Text=WIDGETS ON SCREEN'; A 'Y=(#Y0#-4)'; A 'FontWeight=600'; A ''
 A '[MeterWidgetsHint]'; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A 'Group=TabWidgets'; A 'Hidden=1'
 A 'Text=Click to show or hide'; A 'X=(#PanelWidth#-#Pad#)'; A 'W=260'; A 'StringAlign=Right'; A 'Y=(#Y0#-4)'; A ''
-$widgets = 'Clock', 'Wi-Fi', 'Now Showing', 'Sun & Moon', 'Rain', 'System', 'Calendar'
+$widgets = 'Clock', 'Network', 'Now Showing', 'Sun & Moon', 'Rain', 'System', 'Calendar'
 for ($i = 0; $i -lt $widgets.Count; $i++) {
   $n = $i + 1; $c = $i % 3; $rw = [math]::Floor($i / 3)
   A "[MeterWTile$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleTile'; A 'Group=TabWidgets'; A 'Hidden=1'
