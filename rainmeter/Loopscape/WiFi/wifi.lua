@@ -1,4 +1,6 @@
--- Parses WifiInfo.exe's netsh-style output (run by MeasureNetsh) into the Wi-Fi widget's text and icon.
+-- Parses WifiInfo.exe's netsh-style output (run by MeasureNetsh) into the Network widget's text and icon.
+-- WifiInfo reports Wi-Fi, or a wired connection ("Connection : Ethernet") when the computer uses one; the widget then
+-- shows the adapter's details in place of the Wi-Fi ones, with row labels to match.
 
 function Initialize()
   mRun = SKIN:GetMeasure('MeasureNetsh')
@@ -27,15 +29,59 @@ end
 
 local function set(meter, text) SKIN:Bang('!SetOption', meter, 'Text', text) end
 
-function Update()
-  local out = mRun:GetStringValue() or ''
-  local state = field(out, 'State')
-  local ssid = field(out, 'SSID')
+-- Labels of the five detail rows (MeterL1..L5) for each kind of connection
+local WIFI_LABELS = { 'Band', 'Link speed', 'Standard', 'Security', 'Signal' }
+local WIRED_LABELS = { 'Adapter', 'Link speed', 'Gateway', 'DNS server', 'MAC address' }
+local shownLabels
 
+local function setLabels(labels)
+  if labels == shownLabels then return end
+  shownLabels = labels
+  for i = 1, 5 do set('MeterL' .. i, labels[i]) end
+end
+
+local function speedText(mbps)
+  if not mbps then return nil end
+  if mbps < 1000 then return mbps .. ' Mbps' end
+  local g = mbps / 1000
+  return (g == math.floor(g) and string.format('%d', g) or string.format('%.1f', g)) .. ' Gbps'
+end
+
+-- Adapter names like "Realtek PCIe GbE Family Controller" or "Intel(R) Ethernet Controller I225-V": drop the
+-- trademark marks and "Family Controller", and cut what's left so the row doesn't widen the widget much
+local MAX_ADAPTER = 26
+local function adapterText(desc)
+  if not desc then return nil end
+  desc = desc:gsub('%(R%)', ''):gsub('%(TM%)', ''):gsub('%s+Family%s+Controller', ''):gsub('%s+', ' ')
+  if #desc > MAX_ADAPTER then desc = desc:sub(1, MAX_ADAPTER - 1):gsub('%s+$', '') .. '[\\x2026]' end
+  return desc
+end
+
+local function showWired(out)
+  local mbps = tonumber(field(out, 'Link speed (Mbps)') or '')
+  SKIN:Bang('!SetOption', 'MeterIcon', 'ImageName', iconDir .. 'ethernet.png')
+  setLabels(WIRED_LABELS)
+  set('MeterSSID', field(out, 'Name') or 'Ethernet')
+  set('MeterQuality', 'Wired' .. (mbps and ('  [\\x00B7]  ' .. speedText(mbps)) or ''))
+  set('MeterV1', adapterText(field(out, 'Description')) or '-')
+  set('MeterV2', speedText(mbps) or '-')
+  set('MeterV3', field(out, 'Gateway') or '-')
+  set('MeterV4', field(out, 'DNS server') or '-')
+  set('MeterV5', field(out, 'Physical address') or '-')
+end
+
+local function showWifi(out, state, ssid)
+  setLabels(WIFI_LABELS)
   if state ~= 'connected' or not ssid then
     SKIN:Bang('!SetOption', 'MeterIcon', 'ImageName', iconDir .. 'wifi-off.png')
-    set('MeterSSID', (state == nil and out == '') and 'Checking...' or 'Not connected')
-    set('MeterQuality', state and ('Wi-Fi ' .. state) or 'No Wi-Fi adapter found')
+    if out == '' then
+      set('MeterSSID', 'Checking...')
+      set('MeterQuality', '')
+    else
+      set('MeterSSID', 'Not connected')
+      -- with no State line there is no Wi-Fi adapter, and WifiInfo found no wired connection either
+      set('MeterQuality', state and ('Wi-Fi ' .. state) or 'No network connection')
+    end
     for i = 1, 5 do set('MeterV' .. i, '-') end
   else
     local pct = tonumber((field(out, 'Signal') or ''):match('(%d+)')) or 0
@@ -54,10 +100,23 @@ function Update()
     set('MeterV4', auth ~= '' and auth or 'Open')
     set('MeterV5', rssi and (rssi .. ' dBm') or (pct .. '%'))
   end
+end
+
+function Update()
+  local out = mRun:GetStringValue() or ''
+  local name
+  if field(out, 'Connection') == 'Ethernet' then
+    showWired(out)
+    name = field(out, 'Name') or 'Ethernet'
+  else
+    local state, ssid = field(out, 'State'), field(out, 'SSID')
+    showWifi(out, state, ssid)
+    name = ssid
+  end
   -- the meters only update when asked (DefaultUpdateDivider=-1): two passes, because the panel and the pills come
   -- before the text they wrap
   SKIN:Bang('!UpdateMeter', '*')
   SKIN:Bang('!UpdateMeter', '*')
   SKIN:Bang('!Redraw')
-  return ssid or ''
+  return name or ''
 end

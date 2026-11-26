@@ -57,12 +57,12 @@ Bouncing logo is also a night style.
 
 ## Widgets
 
-All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Wi‑Fi and Now Showing start visible; the others start hidden. Show or hide any of them from the tiles in **Settings → Widgets**.
+All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and Now Showing start visible; the others start hidden. Show or hide any of them from the tiles in **Settings → Widgets**.
 
 | Widget | What it shows |
 |---|---|
 | **Clock** | The time and date, battery level and time left, the current weather and a three-day forecast. |
-| **Wi‑Fi** | The network name and signal, band, channel, link speed, security and local IP address, plus live ping and download and upload speed. |
+| **Network** | On Wi‑Fi, the network name and signal, band, channel, link speed and security. On Ethernet, the adapter, link speed, gateway, DNS server and MAC address. Both show the local IP address, live ping and download and upload speed. |
 | **Now Showing** | The wallpaper style on screen and when rotation will change it, with buttons to go back, pause, skip ahead or keep the current style. |
 | **Sun & Moon** | The sun's path across today's sky, the next sunrise or sunset, and the moon's phase. |
 | **Rain** | Rain or snow in the next 3 hours in 15-minute steps, such as "Rain in ~20 min". |
@@ -71,7 +71,7 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Wi‑Fi and No
 
 **Placement.** Each wallpaper style suggests a calm spot for the widgets, and they move there when the style changes (Settings → Rotation → *Move widgets with wallpaper*). Drag a widget and it snaps to screen spots and to the other widgets; stacked widgets share one width. Settings → Widgets has switches for snapping, matching widths, and how far the bottom spots sit from the taskbar.
 
-**Views.** Middle-click a widget, or right-click it, to pick a view. The Clock, for example, has Full, Simple, Compact and Time only.
+**Views.** Middle-click a widget, or right-click it, to pick a view. The Clock, for example, has Full, Simple, Compact and Time only, and Network has Full, Simple and Speeds.
 
 **Readability.** Settings → Look controls how the text stands out from the wallpaper: a text boost from a soft shadow to a bold outline, text colour that adapts to the wallpaper, a tinted panel behind the text, and pills behind each line.
 
@@ -147,7 +147,7 @@ This section is for developers. You don't need any of it to use Loopscape.
 | Path | Contents |
 |---|---|
 | `wallpaper/` | The Loopscape launcher (`Loopscape.cs`) and the video and still renderers (`make-loop.ps1`, `styles/`). |
-| `rainmeter/Loopscape/` | The Rainmeter skin: Clock, WiFi, NowShowing, SunMoon, Rain, System, Calendar, Settings, ViewMenu and SnapGuides, with shared code in `@Resources` (`snap.lua` handles placement and snapping). Versions before 1.1 installed it as `Skins\LaptopInfo`; the installer moves it. |
+| `rainmeter/Loopscape/` | The Rainmeter skin: Clock, WiFi (the Network widget), NowShowing, SunMoon, Rain, System, Calendar, Settings, ViewMenu and SnapGuides, with shared code in `@Resources` (`snap.lua` handles placement and snapping). Versions before 1.1 installed it as `Skins\LaptopInfo`; the installer moves it. |
 | `rainmeter/WeatherFetch.cs`, `rainmeter/WifiInfo.cs` | Helpers the skin calls. |
 | `rainmeter/gen-settings-ini.ps1` | Generates `Settings/Settings.ini`. Edit the script, not the generated file. |
 | `build/` | `build.ps1` compiles everything with the C# compiler built into Windows (.NET Framework 4.x). `stage.ps1` and `make-styles-release.ps1` prepare a release. |

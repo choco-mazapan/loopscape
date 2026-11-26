@@ -1076,7 +1076,7 @@ function SetView(n)
   SKIN:Bang('!SetVariable', 'View', n)
   SKIN:Bang('!WriteKeyValue', 'Variables', 'View', n)
   applyView()
-  -- Wi-Fi widget: read the Wi-Fi details now if the new view shows them (they're skipped in the Network view)
+  -- Network widget: read the connection details now if the new view shows them (they're skipped in the Speeds view)
   if SKIN:GetMeasure('MeasureNetshTimer') then SKIN:Bang('!UpdateMeasure', 'MeasureNetshTimer') end
   -- re-measure and tell the stack right away instead of on the next tick
   naturalWidth(true)

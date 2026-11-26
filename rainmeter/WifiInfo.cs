@@ -1,16 +1,24 @@
-// WifiInfo - prints the current Wi-Fi connection for the Rainmeter Wi-Fi widget, in the same "Name : value" lines as
-// `netsh wlan show interfaces` (wifi.lua parses either). It replaces netsh so that Windows' location settings, which
-// list every app that reads Wi-Fi network names, show this as "Loopscape" instead of "Network Command Shell".
-// Uses the Native Wifi API (wlanapi.dll) directly.
+// WifiInfo - prints the current network connection for the Rainmeter Network widget (Loopscape\WiFi), in
+// "Name : value" lines that wifi.lua parses.
+// - Wi-Fi: the same lines as `netsh wlan show interfaces` (wifi.lua parses either). It replaces netsh so that Windows'
+//   location settings, which list every app that reads Wi-Fi network names, show this as "Loopscape" instead of
+//   "Network Command Shell". Uses the Native Wifi API (wlanapi.dll) directly.
+// - Ethernet: when the computer reaches the internet over a wired adapter, prints "Connection : Ethernet" and that
+//   adapter's details instead, without asking the Wi-Fi API anything (so no location access is used).
 // Build: csc /target:exe /win32icon:Loopscape.ico /out:Loopscape\@Resources\WifiInfo.exe WifiInfo.cs
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 
 [assembly: AssemblyTitle("Loopscape")]
 [assembly: AssemblyProduct("Loopscape")]
-[assembly: AssemblyDescription("Wi-Fi details for the Loopscape widgets")]
+[assembly: AssemblyDescription("Network details for the Loopscape widgets")]
 [assembly: AssemblyVersion("1.0.0.0")]
 
 static class WifiInfo
@@ -23,6 +31,8 @@ static class WifiInfo
     [DllImport("wlanapi.dll")] static extern int WlanGetNetworkBssList(IntPtr handle, ref Guid iface, IntPtr ssid, int bssType,
                                                                       bool securityEnabled, IntPtr reserved, out IntPtr list);
     [DllImport("wlanapi.dll")] static extern void WlanFreeMemory(IntPtr p);
+    // Index of the adapter that the routing table uses for an IPv4 address (in network byte order)
+    [DllImport("iphlpapi.dll")] static extern int GetBestInterface(uint destAddr, out uint bestIfIndex);
 
     const int OpcodeCurrentConnection = 7;
     // WLAN_INTERFACE_INFO: GUID (16) + WCHAR[256] description (512) + state (4)
@@ -58,10 +68,91 @@ static class WifiInfo
         }
     }
 
+    static bool IsWired(NetworkInterfaceType t)
+    {
+        return t == NetworkInterfaceType.Ethernet || t == NetworkInterfaceType.GigabitEthernet
+            || t == NetworkInterfaceType.FastEthernetT || t == NetworkInterfaceType.FastEthernetFx
+            || t == NetworkInterfaceType.Ethernet3Megabit;
+    }
+
+    static int Ipv4Index(NetworkInterface nic)
+    {
+        try
+        {
+            var v4 = nic.GetIPProperties().GetIPv4Properties();
+            return v4 != null ? v4.Index : -1;
+        }
+        catch (NetworkInformationException) { return -1; }   // the adapter has no IPv4
+    }
+
+    static bool HasGateway(NetworkInterface nic)
+    {
+        return nic.GetIPProperties().GatewayAddresses.Any(g => !IsUnspecified(g.Address));
+    }
+
+    static bool IsUnspecified(IPAddress a)
+    {
+        return a.Equals(IPAddress.Any) || a.Equals(IPAddress.IPv6Any);
+    }
+
+    // The wired adapter the computer uses for the internet, or null when that is Wi-Fi (or nothing).
+    // Normally that's the adapter on the route to a public address (1.1.1.1; any public address gives the same
+    // route). When both cables and Wi-Fi are connected, Windows prefers the wired one, and so does this.
+    // When that route goes through a VPN or another tunnel, it falls back to a wired adapter that is up and has a
+    // gateway, but only if Wi-Fi has none: then the VPN most likely runs over that cable.
+    static NetworkInterface PrimaryWired()
+    {
+        NetworkInterface[] up;
+        try { up = NetworkInterface.GetAllNetworkInterfaces().Where(n => n.OperationalStatus == OperationalStatus.Up).ToArray(); }
+        catch (NetworkInformationException) { return null; }
+        uint best;
+        if (GetBestInterface(0x01010101, out best) == 0)
+        {
+            var nic = up.FirstOrDefault(n => Ipv4Index(n) == (int)best);
+            if (nic != null && IsWired(nic.NetworkInterfaceType)) return nic;
+            if (nic != null && nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211) return null;
+        }
+        if (up.Any(n => n.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 && HasGateway(n))) return null;
+        return up.FirstOrDefault(n => IsWired(n.NetworkInterfaceType) && HasGateway(n));
+    }
+
+    static string PreferIpv4(IEnumerable<IPAddress> addrs)
+    {
+        var all = addrs.Where(a => !IsUnspecified(a)).ToList();
+        var v4 = all.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
+        var pick = v4 ?? all.FirstOrDefault();
+        return pick != null ? pick.ToString() : null;
+    }
+
+    static void WriteWired(StringBuilder sb, NetworkInterface nic)
+    {
+        Line(sb, "Connection", "Ethernet");
+        Line(sb, "Name", nic.Name);
+        Line(sb, "Description", nic.Description);
+        Line(sb, "State", "connected");
+        // Speed is in bits per second; some virtual and USB adapters report 0 or -1
+        if (nic.Speed > 0) Line(sb, "Link speed (Mbps)", (nic.Speed / 1000000).ToString());
+        var ip = nic.GetIPProperties();
+        string gw = PreferIpv4(ip.GatewayAddresses.Select(g => g.Address));
+        if (gw != null) Line(sb, "Gateway", gw);
+        string dns = PreferIpv4(ip.DnsAddresses);
+        if (dns != null) Line(sb, "DNS server", dns);
+        byte[] mac = nic.GetPhysicalAddress().GetAddressBytes();
+        if (mac.Length == 6) Line(sb, "Physical address", BitConverter.ToString(mac));
+    }
+
     static int Main()
     {
         Console.OutputEncoding = new UTF8Encoding(false);
         var sb = new StringBuilder();
+        // A wired connection wins: report it and leave the Wi-Fi API alone
+        NetworkInterface wired = PrimaryWired();
+        if (wired != null)
+        {
+            WriteWired(sb, wired);
+            Console.Write(sb.ToString());
+            return 0;
+        }
         IntPtr h = IntPtr.Zero, ifaces = IntPtr.Zero;
         try
         {

@@ -77,7 +77,7 @@ Name: dl\bounce;      Description: "Bouncing logo (night)"; ExtraDiskSpaceRequir
 [Tasks]
 Name: autostart; Description: "Start Loopscape when I sign in to Windows"
 #ifexist Stage + "\redist\Rainmeter-setup.exe"
-Name: rainmeter; Description: "Install Rainmeter (free and open source; runs the clock and Wi-Fi widgets). Windows will ask for permission."; Check: not RainmeterInstalled
+Name: rainmeter; Description: "Install Rainmeter (free and open source; runs the clock and network widgets). Windows will ask for permission."; Check: not RainmeterInstalled
 #endif
 
 [Files]
