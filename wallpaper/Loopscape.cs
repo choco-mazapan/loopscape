@@ -283,6 +283,10 @@ static class Loopscape
         return h < 2 || w < 2 ? new[] { sw, sh } : new[] { w, h };
     }
 
+    // Quit holds MpvGate while it stops mpv, and StartMpv while it starts one, so no mpv starts once Quit has begun
+    static readonly object MpvGate = new object();
+    static volatile bool quitting;
+
     static void StartMpv(IntPtr host, bool startOnWallpaper)
     {
         StopMpv();
@@ -300,7 +304,11 @@ static class Loopscape
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
         psi.WorkingDirectory = Dir; // so the filter finds static.jpg
-        Mpv = Process.Start(psi);
+        lock (MpvGate)
+        {
+            if (quitting) return;
+            Mpv = Process.Start(psi);
+        }
         try { Mpv.EnableRaisingEvents = true; Mpv.Exited += delegate { Wake.Set(); }; } catch { }   // restart it right away
         MpvStarted = DateTime.Now;
         LastPaused = null;
@@ -1464,7 +1472,9 @@ static class Loopscape
     {
         Log("quit: " + why);
         try { if (tray != null) tray.Visible = false; } catch { }
-        StopMpv();
+        // Quit runs on the tray or quit-watch thread while the main loop keeps going: without the flag, the loop could
+        // see mpv gone and start a new one before Exit, which would then play on with nobody to stop it
+        lock (MpvGate) { quitting = true; StopMpv(); }
         Environment.Exit(0);
     }
 

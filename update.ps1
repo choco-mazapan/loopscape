@@ -432,7 +432,7 @@ function Finish-Update($proc) {
   $text = if ($DryRun) { "Dry run: nothing was changed. A real update would install version $($state.NewVersion)." }
           else { "This PC now runs version $($state.NewVersion)." }
   $installed = @($out | Where-Object { $_ -match '^\s{2}\S' } | ForEach-Object { '    ' + $_.Trim() })
-  if ($installed.Count -gt 0) { $text += "`n`nUpdated on this PC:`n" + ($installed -join "`n") }
+  if ($installed.Count -gt 0) { $text += "`n`n$(if ($DryRun) { 'Would update on this PC:' } else { 'Updated on this PC:' })`n" + ($installed -join "`n") }
   else { $text += "`n`nNothing on this PC needed to change." }
   Show-Result $(if ($DryRun) { 'Dry run finished' } else { 'Loopscape is updated' }) ($text + (& $stashNote)) $false
 }
