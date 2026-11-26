@@ -105,7 +105,7 @@ Click the Loopscape tray icon to open the widgets' Settings panel, or right-clic
 *Update Loopscape* is in the tray menu and in Settings → Look.
 
 - If you installed with the setup program, it opens the [Releases](https://github.com/choco-mazapan/loopscape/releases) page so you can download the newest installer.
-- If you run Loopscape from a git clone of this repository (see [Building from source](#building-from-source)), it opens a window that lists the new changes on GitHub with this PC's version and the new one. Press **Update** to get them: a progress bar follows the rebuild, and the window then shows what was updated.
+- If you run Loopscape from a git clone of this repository (see [Building from source](#building-from-source)), it opens a window that lists the new changes to Loopscape and its widgets, with this PC's version and the new one. Press **Update** to get them: a progress bar follows the rebuild, and the window then shows what was updated. Changes only to files Loopscape doesn't use, such as this README, the screenshots or the installer, aren't listed and don't count as an update.
 
 ## Make your own style with Claude
 

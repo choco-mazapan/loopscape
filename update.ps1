@@ -1,14 +1,17 @@
 # Updates a Loopscape set up from this git clone. Loopscape starts it from the tray menu (Update Loopscape) and the
 # Settings panel (Look > Update Loopscape); it finds this folder through sourceFolder= in Loopscape.ini, which
 # sync.ps1 fills in. It opens a window that:
-#   1. checks GitHub (git fetch origin main) and lists the new changes, with this PC's version and the new one
+#   1. checks GitHub (git fetch origin main) and lists the new changes to Loopscape and its widgets, with this PC's
+#      version and the new one. Changes only to files Loopscape doesn't use (README, screenshots, installer, CI, the
+#      Claude skill, style-rendering scripts: see $appPaths) aren't listed, and if there are no others it says
+#      Loopscape is up to date and leaves the clone alone
 #   2. waits for you to press Update. If the clone has local changes or is on another branch than main, the window
 #      says so first: Update sets the changes aside with git stash (git stash pop brings them back) and switches to main
 #   3. fast-forwards to origin/main and runs sync.ps1, which rebuilds what changed, restarts Loopscape and refreshes
 #      the widgets, with a progress bar
 #   4. shows what was updated on this PC
-# Everything it runs goes to %USERPROFILE%\Loopscape\update.log. Versions are <last v tag>.<commits since it>, from
-# git describe (v1.0.0 plus 45 commits = 1.0.0.45).
+# Everything it runs goes to %USERPROFILE%\Loopscape\update.log. Versions are <last v tag>.<commits since it that
+# change Loopscape's files> (v1.0.0 plus 45 such commits = 1.0.0.45).
 #   powershell -ExecutionPolicy Bypass -File .\update.ps1
 #   .\update.ps1 -DryRun                      changes nothing: no stash, no merge, and sync.ps1 -DryRun
 #   .\update.ps1 -DryRun -ScreenshotDir C:\x  also presses Update by itself and saves a picture of each screen
@@ -73,10 +76,21 @@ function Poll-Proc($r) {
   }
 }
 
-# "1.0.0.45" for v1.0.0 plus 45 commits; the short commit id when there's no tag
+# The files Loopscape and its widgets are built and installed from (git pathspecs: everything except these).
+# Commits that only touch the excluded files don't change this PC, so they aren't listed or counted in the version.
+$appPaths = @('.',
+  ':(exclude)README.md', ':(exclude)LICENSE', ':(exclude)THIRD-PARTY-NOTICES.txt', ':(exclude).gitignore',
+  ':(exclude).github', ':(exclude)screenshots', ':(exclude)skills', ':(exclude)installer',
+  ':(exclude)build/deps.json', ':(exclude)build/get-deps.ps1', ':(exclude)build/stage.ps1', ':(exclude)build/make-styles-release.ps1',
+  ':(exclude)wallpaper/styles', ':(exclude)wallpaper/make-loop.ps1', ':(exclude)rainmeter/make-*.ps1')
+
+# "1.0.0.45" for v1.0.0 plus 45 commits that change Loopscape's files; the short commit id when there's no tag
 function Get-Version($ref) {
-  $d = (Invoke-Git describe --tags --match 'v[0-9]*' --long $ref).Out | Select-Object -First 1
-  if ($d -match '^v(\d+(?:\.\d+)*)-(\d+)-g([0-9a-f]+)$') { return "$($Matches[1]).$($Matches[2])" }
+  $tag = (Invoke-Git describe --tags --match 'v[0-9]*' --abbrev=0 $ref).Out | Select-Object -First 1
+  if ($tag -match '^v(\d+(?:\.\d+)*)$') {
+    $n = (Invoke-Git rev-list --count "$tag..$ref" '--' @appPaths).Out | Select-Object -First 1
+    return "$($Matches[1]).$n"
+  }
   (Invoke-Git rev-parse --short $ref).Out | Select-Object -First 1
 }
 
@@ -208,7 +222,10 @@ function Show-Changes {
   $state.Dirty  = @((Invoke-Git status --porcelain).Out | Where-Object { $_ })
   $here = Get-Version HEAD
   $state.NewVersion = Get-Version origin/main
-  $new = @((Invoke-Git log --no-merges '--format=%cs%x09%s' HEAD..origin/main).Out | Where-Object { $_ })
+  $new = @((Invoke-Git log --no-merges '--format=%cs%x09%s' HEAD..origin/main '--' @appPaths).Out | Where-Object { $_ })
+  $all = @((Invoke-Git rev-list --no-merges HEAD..origin/main).Out | Where-Object { $_ })
+  $other = [Math]::Max(0, $all.Count - $new.Count)   # commits that only touch files Loopscape doesn't use
+  $otherText = "$other change$(if ($other -ne 1) { 's' }) to the README and other files Loopscape doesn't use"
   foreach ($c in $new) {
     $date, $subject = $c -split "`t", 2
     $item = New-Object Windows.Forms.ListViewItem($subject)
@@ -231,15 +248,22 @@ function Show-Changes {
     $title.Text = 'Loopscape is up to date'
     $versions.Text = "This PC: $here"
     $list.Visible = $false
-    $status.Text = 'There are no new changes on GitHub.'; $status.Location = $list.Location; $status.Visible = $true
+    $status.Text = if ($other -gt 0) { "There are no new changes to Loopscape or the widgets. GitHub has $otherText, so there's nothing to install." }
+                   else { 'There are no new changes on GitHub.' }
+    $status.Location = $list.Location; $status.Size = New-Object Drawing.Size($list.Width, [int]($list.Height / 3)); $status.Visible = $true
     $primary.Text = 'Close'; $primary.Enabled = $true; $cancel.Visible = $false
-    Log 'already up to date'
+    Log "already up to date ($other other commits left out)"
     Save-Screenshot 'up-to-date'
     return
   }
   $title.Text = if ($new.Count -eq 0) { 'Switch to the latest version?' }
                 else { "$($new.Count) new change$(if ($new.Count -ne 1) { 's' }) on GitHub" }
   if ($new.Count -eq 0) { [void]$list.Items.Add((New-Object Windows.Forms.ListViewItem('No new changes; this PC gets the main branch as it is on GitHub.'))) }
+  if ($other -gt 0) {
+    $item = New-Object Windows.Forms.ListViewItem("Not listed: $otherText")
+    $item.ForeColor = $dim
+    [void]$list.Items.Add($item)
+  }
   $note.Text = $notes -join "`n"; $note.Visible = $notes.Count -gt 0
   $state.Busy = $false; $state.Step = 'confirm'
   $primary.Text = 'Update'; $primary.Enabled = $true
