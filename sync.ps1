@@ -4,7 +4,7 @@
 #   - copies the Rainmeter skin to Documents\Rainmeter\Skins\Loopscape, keeping what lives only there:
 #       Settings.inc values (new keys are added), widget layout (SnapAttach, SnapSize, View), the panel's last tab (Tab),
 #       and the bundled fonts (Rainmeter locks them; copied only if missing)
-#   - rebuilds and restarts Loopscape if Loopscape.cs changed (or with -RebuildLoopscape); new Loopscape.ini keys are added
+#   - rebuilds and restarts Loopscape if Loopscape.cs or Updater.cs changed (or with -RebuildLoopscape); new Loopscape.ini keys are added
 #   - refreshes the widgets
 #   - saves this folder as sourceFolder= in Loopscape.ini, so the tray's Update Loopscape can update from it (update.ps1)
 #   .\sync.ps1            .\sync.ps1 -DryRun            .\sync.ps1 -RebuildLoopscape
@@ -62,7 +62,7 @@ $installedLw = Join-Path $env:LOCALAPPDATA 'Programs\Loopscape\Loopscape.exe'
 if (Test-Path $installedLw) { $lwExe = $installedLw }
 $staleWf = Test-Stale $wfExe (Join-Path $root 'rainmeter\WeatherFetch.cs')
 $staleWi = Test-Stale $wiExe (Join-Path $root 'rainmeter\WifiInfo.cs')
-$staleLw = $RebuildLoopscape -or (Test-Stale $lwExe (Join-Path $root 'wallpaper\Loopscape.cs'))
+$staleLw = $RebuildLoopscape -or (Test-Stale $lwExe (Join-Path $root 'wallpaper\Loopscape.cs')) -or (Test-Stale $lwExe (Join-Path $root 'wallpaper\Updater.cs'))
 if ($staleWf -or $staleWi -or $staleLw) {
   Step 10 'Building Loopscape and the widget helpers'
   Say 'building (build\build.ps1)'

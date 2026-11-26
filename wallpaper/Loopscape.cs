@@ -7,7 +7,7 @@
 // - Re-attaches if Explorer restarts
 // - Sleeps between checks: Windows wakes it when the power source, the active window or a settings file changes
 // - Tray icon: opens the widget Settings panel, skips or picks a wallpaper, updates Loopscape, quits
-// Build: build\build.ps1 (uses the C# compiler that ships with Windows). C# 5 syntax only.
+// Build: build\build.ps1 (uses the C# compiler that ships with Windows; with Updater.cs). C# 5 syntax only.
 using System;
 using System.Diagnostics;
 using System.Globalization;
@@ -21,7 +21,8 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Collections.Generic;
 
-static class Loopscape
+// Split over Loopscape.cs and Updater.cs (Update Loopscape for installed copies).
+static partial class Loopscape
 {
     // ---------------- Win32 ----------------
     delegate bool EnumProc(IntPtr h, IntPtr l);
@@ -1135,6 +1136,7 @@ static class Loopscape
                 };
                 tray.MouseMove += delegate { UpdateTrayTip(); };
                 tray.Visible = true;
+                FinishInstallerUpdate(tray);
                 AppDomain.CurrentDomain.ProcessExit += delegate { try { tray.Visible = false; tray.Dispose(); } catch { } };
                 Log("tray icon on");
                 System.Windows.Forms.Application.Run();
@@ -1157,13 +1159,14 @@ static class Loopscape
             // MouseMove fires many times a second over the icon: read the files at most every few seconds
             if ((DateTime.UtcNow - tipStatusRead).TotalSeconds > 5)
             {
-                tipStatus = UpdateScript() != null ? UpdateStatus() : null;
+                tipStatus = UpdateStatus();
                 tipStatusRead = DateTime.UtcNow;
             }
             UpdateInfo info = tipStatus;
             if (info != null)
             {
-                string line = info.UpToDate ? "Up to date (" + info.Version + ")" : "Update available (" + info.Count + " new)";
+                string line = info.UpToDate ? "Up to date (" + info.Version + ")"
+                            : info.Count > 0 ? "Update available (" + info.Count + " new)" : "Update available (" + info.Latest + ")";
                 if (tip.Length + 1 + line.Length <= 63) tip += "\n" + line;
             }
             if (tip.Length > 63) tip = tip.Substring(0, 63);
@@ -1290,12 +1293,13 @@ static class Loopscape
         autostart.Click += delegate { SetStartWithWindows(!StartsWithWindows()); };
         menu.Items.Add(autostart);
         bool updating = UpdateRunning();
-        bool fromClone = UpdateScript() != null;
-        UpdateInfo info = fromClone && !updating ? UpdateStatus() : null;
+        bool fromClone = UpdateScript() != null, installed = !fromClone && InstalledVersion() != null;
+        UpdateInfo info = (fromClone || installed) && !updating ? UpdateStatus() : null;
         var update = new System.Windows.Forms.ToolStripMenuItem(updating ? "Updating Loopscape..." : "Update Loopscape");
         update.Enabled = !updating;
         update.ToolTipText = fromClone ? "Get the latest version from GitHub, rebuild it and refresh the widgets"
-                                       : "Open the Releases page to download the newest installer";
+                           : installed ? "Check GitHub for a newer version and install it"
+                           : "Open the Releases page to download the newest installer";
         if (info != null && info.UpToDate)
         {
             update.Text = "Loopscape is up to date";
@@ -1304,10 +1308,19 @@ static class Loopscape
         }
         else if (info != null)
         {
-            update.Text = "Update Loopscape (" + info.Count + " new)";
             update.ShortcutKeyDisplayString = info.Latest;
-            update.ToolTipText = info.Count + " new change" + (info.Count == 1 ? "" : "s") + " on GitHub when checked " + info.CheckedText +
-                                 ". Click to see them and update";
+            if (info.Count > 0)
+            {
+                update.Text = "Update Loopscape (" + info.Count + " new)";
+                update.ToolTipText = info.Count + " new change" + (info.Count == 1 ? "" : "s") + " on GitHub when checked " + info.CheckedText +
+                                     ". Click to see them and update";
+            }
+            else
+            {
+                // an installed copy: a new release rather than a count of commits
+                update.Text = "Update Loopscape";
+                update.ToolTipText = "Version " + info.Latest + " was on GitHub when checked " + info.CheckedText + ". Click to update";
+            }
         }
         update.Click += delegate { ThreadPool.QueueUserWorkItem(delegate { StartUpdate("tray"); }); };
         menu.Items.Add(update);
@@ -1388,7 +1401,9 @@ static class Loopscape
     // checks for updates in the background.
     // With a git clone of the source (sourceFolder= in Loopscape.ini, which sync.ps1 fills in) it starts the clone's
     // update.ps1, which lists the new changes, and after you confirm pulls them and runs sync.ps1 with a progress bar.
-    // sync.ps1 may restart this program midway, so update.ps1 runs in its own process. Without a clone it opens the Releases page to get the newest installer.
+    // sync.ps1 may restart this program midway, so update.ps1 runs in its own process.
+    // A copy installed with the setup program gets the update window in Updater.cs, which downloads, checks and runs the
+    // newest installer. Any other copy opens the Releases page to get the newest installer.
     const string ReleasesUrl = "https://github.com/choco-mazapan/loopscape/releases";
     const string UpdateMutexName = "Local\\LoopscapeUpdate";   // held by update.ps1 while it runs
     static string UpdateScript()
@@ -1426,7 +1441,8 @@ static class Loopscape
             if (d.TryGetValue("version", out v)) info.Version = v;
             if (d.TryGetValue("latest", out v)) info.Latest = v;
             if (d.TryGetValue("count", out v)) int.TryParse(v, out info.Count);
-            if (!info.UpToDate && info.Count <= 0) return null;
+            // available: a clone counts new commits, an installed copy names the new release
+            if (!info.UpToDate && info.Count <= 0 && info.Latest.Length == 0) return null;
             DateTime when;
             if (d.TryGetValue("checked", out v) && DateTime.TryParseExact(v, "yyyy-MM-dd HH:mm",
                     System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out when))
@@ -1456,7 +1472,14 @@ static class Loopscape
             string script = UpdateScript();
             if (script == null)
             {
-                Log(from + ": update: no sourceFolder, opening the Releases page");
+                Version installedVer = InstalledVersion();
+                if (installedVer != null)
+                {
+                    Log(from + ": update: installed copy " + installedVer + ", checking the releases");
+                    ShowInstallerUpdate(installedVer);
+                    return;
+                }
+                Log(from + ": update: no sourceFolder and not installed by the setup program, opening the Releases page");
                 Process.Start(ReleasesUrl);
                 return;
             }

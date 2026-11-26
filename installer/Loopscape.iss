@@ -306,11 +306,15 @@ begin
   if UseWindowsLocation.Checked then SetIniString('Variables', 'WeatherLocation', 'windows', SettingsInc)
   else SetIniString('Variables', 'WeatherLocation', 'city', SettingsInc);
 
-  // start with Windows
-  if WizardIsTaskSelected('autostart') then
-    RegWriteStringValue(HKCU, '{#RunKey}', 'Loopscape', '"' + ExpandConstant('{app}\Loopscape.exe') + '"')
-  else
-    RegDeleteValue(HKCU, '{#RunKey}', 'Loopscape');
+  // start with Windows. A silent run is Update Loopscape installing a new version (wallpaper\Updater.cs): the tray
+  // menu's Start with Windows may have changed since the first setup, so leave it as it is
+  if not WizardSilent then
+  begin
+    if WizardIsTaskSelected('autostart') then
+      RegWriteStringValue(HKCU, '{#RunKey}', 'Loopscape', '"' + ExpandConstant('{app}\Loopscape.exe') + '"')
+    else
+      RegDeleteValue(HKCU, '{#RunKey}', 'Loopscape');
+  end;
 
   // widgets
   if not RainmeterRunning then ActivateWidgetsInIni;
@@ -345,8 +349,9 @@ begin
     end;
   end;
 
-  // styles to download (Loopscape reads download-styles.txt when it starts and deletes it once they're all on disk)
-  WriteDownloadList;
+  // styles to download (Loopscape reads download-styles.txt when it starts and deletes it once they're all on disk).
+  // Not on a silent update: the styles picked or skipped since then stay as they are.
+  if not WizardSilent then WriteDownloadList;
 
   // the wallpaper
   ExecAsOriginalUser(ExpandConstant('{app}\Loopscape.exe'), '', '', SW_SHOWNORMAL, ewNoWait, rc);

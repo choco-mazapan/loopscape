@@ -10,9 +10,9 @@ if (-not (Test-Path $csc)) { throw "C# compiler not found: $csc" }
 $icon = Join-Path $root 'rainmeter\Loopscape.ico'
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
-# name, source, extra csc arguments
+# name, source files, extra csc arguments (System.Web.Extensions: the JSON reader Updater.cs uses for GitHub's answers)
 $targets = @(
-  @('Loopscape.exe',     'wallpaper\Loopscape.cs',        @('/target:winexe', '/optimize+', '/r:System.Drawing.dll', '/r:System.Windows.Forms.dll', "/win32icon:$icon")),
+  @('Loopscape.exe',     @('wallpaper\Loopscape.cs', 'wallpaper\Updater.cs'), @('/target:winexe', '/optimize+', '/r:System.Drawing.dll', '/r:System.Windows.Forms.dll', '/r:System.Web.Extensions.dll', "/win32icon:$icon")),
   @('WeatherFetch.exe', 'rainmeter\WeatherFetch.cs',    @('/target:exe', '/r:System.Device.dll', '/r:System.Windows.Forms.dll', "/win32icon:$icon")),
   @('WifiInfo.exe',     'rainmeter\WifiInfo.cs',        @('/target:exe', "/win32icon:$icon")),
   @('Render.exe',       'wallpaper\styles\Render.cs',   @('/target:exe', '/optimize+'))
@@ -20,7 +20,8 @@ $targets = @(
 foreach ($t in $targets) {
   $out = Join-Path $OutDir $t[0]
   $extra = $t[2]
-  & $csc /nologo @extra "/out:$out" (Join-Path $root $t[1])
+  $sources = @($t[1] | ForEach-Object { Join-Path $root $_ })
+  & $csc /nologo @extra "/out:$out" @sources
   if ($LASTEXITCODE -ne 0) { throw "$($t[0]) failed to compile" }
 }
 "Built into $OutDir"
