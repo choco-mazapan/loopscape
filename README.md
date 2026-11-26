@@ -61,7 +61,7 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and No
 
 | Widget | What it shows |
 |---|---|
-| **Clock** | The time and date, battery level and time left, the current weather and a three-day forecast. |
+| **Clock** | The time and date, the current weather and a three-day forecast. On laptops and tablets it also shows the battery level and time left; on desktops the battery line is hidden. |
 | **Network** | On Wi‑Fi, the network name and signal, band, channel, link speed and security. On Ethernet, the adapter, link speed, gateway, DNS server and MAC address. Both show the local IP address, live ping and download and upload speed. |
 | **Now Showing** | The wallpaper style on screen and when rotation will change it, with buttons to go back, pause, skip ahead or keep the current style. |
 | **Sun & Moon** | The sun's path across today's sky, the next sunrise or sunset, and the moon's phase. |
