@@ -2,11 +2,11 @@
 
 **Loopscape** is a live wallpaper for Windows 10 and 11. It plays looping animated landscapes (shores, pixel clouds, auroras, nebulas and more) behind your desktop icons, with dark styles at night. It comes with desktop widgets for Rainmeter: a clock with battery and weather, Wi‑Fi and network details, a Now Showing card for the wallpaper itself, and optional Sun & Moon, Rain, System and Calendar widgets. They live in `Documents\Rainmeter\Skins\Loopscape`.
 
-![Riso style with the Loopscape widgets](screenshots/riso.jpg)
+![The riso style](screenshots/riso.jpg)
 
 ## Screenshots
 
-Each style is a looping video; the widgets snap to a spot that suits it.
+Each style is a looping video. The screenshots show the wallpaper on its own, without widgets.
 
 ![The shore style animating](screenshots/shore.gif)
 
