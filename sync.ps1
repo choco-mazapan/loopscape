@@ -8,7 +8,8 @@
 #   - refreshes the widgets
 #   - saves this folder as sourceFolder= in Loopscape.ini, so the tray's Update Loopscape can update from it (update.ps1)
 #   .\sync.ps1            .\sync.ps1 -DryRun            .\sync.ps1 -RebuildLoopscape
-param([switch]$DryRun, [switch]$RebuildLoopscape)
+#   -Progress also prints "progress <percent> <step>" lines, which update.ps1 shows as its progress bar
+param([switch]$DryRun, [switch]$RebuildLoopscape, [switch]$Progress)
 $ErrorActionPreference = 'Stop'
 $root    = $PSScriptRoot
 $skinSrc = Join-Path $root 'rainmeter\Loopscape'
@@ -18,6 +19,7 @@ $rm      = "$env:ProgramFiles\Rainmeter\Rainmeter.exe"
 $runtimeKeys = 'SnapAttach', 'SnapSize', 'View', 'Tab'     # written by the skins at runtime: the live value wins
 $changed = New-Object System.Collections.Generic.List[string]
 function Say($m) { if ($DryRun) { "[dry run] $m" } else { $m } }
+function Step($percent, $what) { if ($Progress) { "progress $percent $what" } }
 
 function Read-Text($path) {
   $bytes = [IO.File]::ReadAllBytes($path)
@@ -46,6 +48,7 @@ function Merge-NewKeys($src, $dst) {
 }
 
 # ---- 1. generated / compiled files in the project ----
+Step 0 'Preparing the Settings panel'
 if (-not $DryRun) { & (Join-Path $root 'rainmeter\gen-settings-ini.ps1') | Out-Null }
 # Programs are compiled by build\build.ps1 (the same build the installer uses) when a source or the icon is newer
 # than the copy in use. WeatherFetch / WifiInfo go into the skin's @Resources, Loopscape into %USERPROFILE%\Loopscape.
@@ -61,6 +64,7 @@ $staleWf = Test-Stale $wfExe (Join-Path $root 'rainmeter\WeatherFetch.cs')
 $staleWi = Test-Stale $wiExe (Join-Path $root 'rainmeter\WifiInfo.cs')
 $staleLw = $RebuildLoopscape -or (Test-Stale $lwExe (Join-Path $root 'wallpaper\Loopscape.cs'))
 if ($staleWf -or $staleWi -or $staleLw) {
+  Step 10 'Building Loopscape and the widget helpers'
   Say 'building (build\build.ps1)'
   if (-not $DryRun) { & (Join-Path $root 'build\build.ps1') -OutDir $built | Out-Null }
   if ($staleWf) { Say 'updated WeatherFetch.exe'; if (-not $DryRun) { Copy-Item (Join-Path $built 'WeatherFetch.exe') $wfExe -Force } }
@@ -68,6 +72,7 @@ if ($staleWf -or $staleWi -or $staleLw) {
 }
 
 # ---- 2. skin files ----
+Step 60 'Copying the widgets'
 # a new widget folder: Rainmeter only knows the configs it found at start, so it has to rescan (step 4)
 $newConfigs = @(Get-ChildItem $skinSrc -Directory | Where-Object { $_.Name -ne '@Resources' -and -not (Test-Path (Join-Path $skinDst $_.Name)) })
 foreach ($f in Get-ChildItem $skinSrc -Recurse -File) {
@@ -94,6 +99,7 @@ foreach ($f in Get-ChildItem $skinSrc -Recurse -File) {
 
 # ---- 3. Loopscape ----
 if ($staleLw) {
+  Step 75 'Restarting Loopscape'
   $changed.Add('Loopscape.exe (rebuilt, restarted)')
   if (-not $DryRun) {
     New-Item -ItemType Directory -Force $lwDir | Out-Null
@@ -123,6 +129,7 @@ if (-not $DryRun -and -not (Get-Process Loopscape -ErrorAction SilentlyContinue)
 }
 
 # ---- 4. refresh the widgets ----
+Step 90 'Refreshing the widgets'
 if (-not $DryRun -and $changed.Count -gt 0 -and (Test-Path $rm)) {
   $rmIni = Join-Path $env:APPDATA 'Rainmeter\Rainmeter.ini'
   $rmText = if (Test-Path $rmIni) { [IO.File]::ReadAllText($rmIni) } else { '' }
@@ -134,3 +141,4 @@ if (-not $DryRun -and $changed.Count -gt 0 -and (Test-Path $rm)) {
 }
 if ($changed.Count -eq 0) { Say 'Everything is already up to date.' }
 else { Say "Updated:"; $changed | ForEach-Object { "  $_" } }
+Step 100 'Done'

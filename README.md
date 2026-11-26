@@ -105,7 +105,7 @@ Click the Loopscape tray icon to open the widgets' Settings panel, or right-clic
 *Update Loopscape* is in the tray menu and in Settings → Look.
 
 - If you installed with the setup program, it opens the [Releases](https://github.com/choco-mazapan/loopscape/releases) page so you can download the newest installer.
-- If you run Loopscape from a git clone of this repository (see [Building from source](#building-from-source)), it gets the latest code from GitHub, rebuilds Loopscape, updates the widgets and shows what changed.
+- If you run Loopscape from a git clone of this repository (see [Building from source](#building-from-source)), it opens a window that lists the new changes on GitHub with this PC's version and the new one. Press **Update** to get them: a progress bar follows the rebuild, and the window then shows what was updated.
 
 ## Make your own style with Claude
 
@@ -158,7 +158,9 @@ This section is for developers. You don't need any of it to use Loopscape.
 
 ### Run from a clone
 
-Clone the repository and run `.\sync.ps1`. After that, *Update Loopscape* runs `update.ps1`, which fetches `origin/main`, fast-forwards the clone, runs `sync.ps1` and shows the result (details in `%USERPROFILE%\Loopscape\update.log`). If the clone has local changes or is on another branch, it lists them and asks before it sets them aside with `git stash` and switches to `main`. Run `git stash pop` to bring the changes back.
+Clone the repository and run `.\sync.ps1`. After that, *Update Loopscape* runs `update.ps1`, which fetches `origin/main` and lists the new commits. After you press **Update**, it fast-forwards the clone, runs `sync.ps1 -Progress` and shows the result (details in `%USERPROFILE%\Loopscape\update.log`). If the clone has local changes or is on another branch, the window says so, and Update sets them aside with `git stash` and switches to `main`. Run `git stash pop` to bring the changes back.
+
+Versions are the last `v` tag plus the number of commits since it (`v1.0.0` plus 45 commits is 1.0.0.45). `update.ps1 -DryRun` changes nothing.
 
 ### Checks
 
