@@ -35,9 +35,32 @@ end
 --   anyOn = value   a two-option row whose stored value can also be one of several older ones: anything but the
 --                   other option counts as this one (Text colour used to have six modes)
 --   custom = fn     the value isn't in the list (a typed number): fn(value) gives its label
+--   compound        the row sets more than one variable: read() gives the value to show, write(value) the
+--                   { variable = value } to store
 local ROWS = {
   { 'MatchWidths',   'MeterVal1', { { '1', 'On' }, { '0', 'Off' } } },
-  { 'SnapEnabled',   'MeterVal2', { { '1', 'On' }, { '0', 'Off' } } },
+  -- read by snap.lua: whether a drop snaps, and how close to a target it has to land (SnapEnabled + SnapRadius)
+  { 'SnapEnabled',   'MeterVal2', { { '0', 'Off' }, { '24', 'Within 24 px' }, { '48', 'Within 48 px' }, { '96', 'Within 96 px' } },
+    custom = function(v) return 'Within ' .. v .. ' px' end,
+    compound = {
+      read = function()
+        if SKIN:GetVariable('SnapEnabled', '1') == '0' then return '0' end
+        local r = SKIN:GetVariable('SnapRadius', '')
+        return r ~= '' and r or '48'
+      end,
+      write = function(v) if v == '0' then return { SnapEnabled = '0' } end; return { SnapEnabled = '1', SnapRadius = v } end,
+    } },
+  -- read by snap.lua: drops that land near no target move to a grid of this spacing (SnapGrid + SnapGridSize)
+  { 'SnapGrid',      'MeterVal20', { { '0', 'Off' }, { '12', '12 px' }, { '24', '24 px' }, { '48', '48 px' } },
+    custom = function(v) return v .. ' px' end,
+    compound = {
+      read = function()
+        if SKIN:GetVariable('SnapGrid', '1') == '0' then return '0' end
+        local g = SKIN:GetVariable('SnapGridSize', '')
+        return g ~= '' and g or '24'
+      end,
+      write = function(v) if v == '0' then return { SnapGrid = '0' } end; return { SnapGrid = '1', SnapGridSize = v } end,
+    } },
   -- read by snap.lua: how far the three bottom snap spots sit above the bottom of the screen. "Custom" opens the text
   -- box for any number of pixels.
   { 'SnapBottomMargin', 'MeterVal19', { { '76', 'Above taskbar (76 px)' }, { '28', 'Over taskbar (28 px)' },
@@ -77,6 +100,7 @@ local ROWS = {
 -- clicks ignored. Row number n = its MeterLabelN / MeterHintN / MeterValN. The check gets the current value of a
 -- variable (with the row's default applied).
 local DIMMED = {
+  { n = 20, why = 'Snapping is off',                when = function(get) return get('SnapEnabled') == '0' end },
   { n = 22, why = 'Not used with Windows location', when = function(get) return get('WeatherLocation') == 'windows' end },
   { n = 10, why = 'Off while Panel darkness is on', when = function(get) return get('PanelAlpha') ~= '0' end },
   { n = 9,  why = 'Off while Panel darkness is on', when = function(get) return get('PanelAlpha') ~= '0' end },
@@ -111,6 +135,7 @@ local function row(var) for _, r in ipairs(ROWS) do if r[1] == var then return r
 -- A setting's value, with the row's default when Settings.inc doesn't have it, and older values folded into anyOn
 local function current(var)
   local r = row(var)
+  if r and r.compound then return r.compound.read() end
   local v = SKIN:GetVariable(var, '')
   if v == '' and r and r[4] then
     if type(r[4]) == 'function' then v = r[4]() else v = r[4] end
@@ -458,6 +483,14 @@ local function setValue(var, value)
   apply(var, value)
 end
 
+-- A row's choice: one variable, or several for a compound row
+local function setRow(r, value)
+  if not r.compound then setValue(r[1], value); return end
+  for k, v in pairs(r.compound.write(value)) do
+    if SKIN:GetVariable(k, '') ~= v then setValue(k, v) end
+  end
+end
+
 function PickTile(i)
   local id = TILES[i]
   if id and id ~= SKIN:GetVariable('WallpaperMode', '') then setValue('WallpaperMode', id) end
@@ -628,7 +661,7 @@ local function openDropdown(r)
   openList(r[1], r[2], items, sel, function(i)
     local v = r[3][i] and r[3][i][1]
     if v == '#custom' then EditField('bottom')
-    elseif v then setValue(r[1], v) end
+    elseif v then setRow(r, v) end
   end)
 end
 
@@ -653,7 +686,7 @@ function Next(var)
   for i, opt in ipairs(opts) do
     if opt[1] == cur then nextValue = opts[(i % #opts) + 1][1] end
   end
-  setValue(var, nextValue)
+  setRow(r, nextValue)
 end
 
 -- ---------- profiles ----------
