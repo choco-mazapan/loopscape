@@ -106,7 +106,9 @@ if ($staleLw) {
     # ask the running copy to quit (it stops its mpv); stop it if it doesn't
     if (Test-Path $lwExe) { Start-Process $lwExe '--quit' -Wait -ErrorAction SilentlyContinue }
     Get-Process Loopscape -ErrorAction SilentlyContinue | Stop-Process -Force
-    Get-CimInstance Win32_Process -Filter "Name='mpv.exe'" | Where-Object { $_.CommandLine -like '*pipe\loopscape*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+    # this session's wallpaper mpv only (its pipe is loopscape-<session>, or loopscape before that was added)
+    $session = (Get-Process -Id $PID).SessionId
+    Get-CimInstance Win32_Process -Filter "Name='mpv.exe' AND SessionId=$session" | Where-Object { $_.CommandLine -like '*pipe\loopscape*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
     Start-Sleep -Milliseconds 500
     Copy-Item (Join-Path $built 'Loopscape.exe') $lwExe -Force
   }

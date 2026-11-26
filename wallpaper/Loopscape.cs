@@ -54,8 +54,11 @@ static class Loopscape
     // Dir: our data (Loopscape.ini, styles\, loop.mp4, log, static.jpg) - always %USERPROFILE%\Loopscape.
     static readonly string ExeDir = AppDomain.CurrentDomain.BaseDirectory;
     static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Loopscape");
-    static Dictionary<string, string> Cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    static string Get(string k, string d) { string v; return Cfg.TryGetValue(k, out v) && v.Length > 0 ? v : d; }
+    // The settings in effect. The tray, download and widget threads read them too, so LoadConfig builds a new
+    // dictionary and swaps it in whole instead of changing this one; never write to it.
+    static volatile Dictionary<string, string> Cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    static string Get(string k, string d) { return Get(Cfg, k, d); }
+    static string Get(Dictionary<string, string> cfg, string k, string d) { string v; return cfg.TryGetValue(k, out v) && v.Length > 0 ? v : d; }
     static bool GetBool(string k, bool d) { return IsTrue(Get(k, d ? "true" : "false")); }
     static bool IsTrue(string v) { v = v.Trim().ToLowerInvariant(); return v == "true" || v == "1" || v == "yes"; }
     static int GetInt(string k, int d) { int v; return int.TryParse(Get(k, ""), out v) ? v : d; }
@@ -100,26 +103,27 @@ static class Loopscape
 
     static void LoadConfig()
     {
-        Cfg.Clear();
-        ReadIni(Path.Combine(Dir, "Loopscape.ini"), Cfg);
+        var cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        ReadIni(Path.Combine(Dir, "Loopscape.ini"), cfg);
         var panel = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try { ReadIni(Path.Combine(Res, "Settings.inc"), panel); } catch { }
         foreach (var k in PanelKeys)
         {
             string v;
-            if (panel.TryGetValue(k[0], out v) && v.Length > 0) Cfg[k[1]] = v;
+            if (panel.TryGetValue(k[0], out v) && v.Length > 0) cfg[k[1]] = v;
         }
         // The style picked in the panel / tray (Settings.inc WallpaperMode) wins over Loopscape.ini: a single style, or
         // "rotate". A style that isn't on disk yet is still chosen: CurrentVideo() downloads it and plays something else
         // meanwhile.
         string mode;
-        if (panel.TryGetValue("WallpaperMode", out mode)) ApplyMode(mode.Trim().ToLowerInvariant());
+        if (panel.TryGetValue("WallpaperMode", out mode)) ApplyMode(cfg, mode.Trim().ToLowerInvariant());
         // "Still image" picked in the panel: use the rendered stills (or each style's own first frame)
-        if (Get("onBattery", "") == "static" && Get("batteryStills", "").Length == 0 && panel.ContainsKey("WallOnBattery"))
+        if (Get(cfg, "onBattery", "") == "static" && Get(cfg, "batteryStills", "").Length == 0 && panel.ContainsKey("WallOnBattery"))
         {
             string pics = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Loopscape Stills");
-            Cfg["batteryStills"] = Directory.Exists(pics) ? pics : Path.Combine(Dir, "styles");
+            cfg["batteryStills"] = Directory.Exists(pics) ? pics : Path.Combine(Dir, "styles");
         }
+        Cfg = cfg;
     }
 
     // Every style Loopscape knows (bundled, or downloadable via styles.json), split into day and night
@@ -132,22 +136,22 @@ static class Loopscape
     }
 
     // mode: "rotate" (day styles by day, night styles at night) or one style name ("gradient" = loop.mp4)
-    static void ApplyMode(string mode)
+    static void ApplyMode(Dictionary<string, string> cfg, string mode)
     {
         if (mode.Length == 0 || mode.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return;
         if (mode == "rotate")
         {
             // keep a hand-written rotation from Loopscape.ini; otherwise every style on this PC
             // (only styles on disk play: StyleList skips the others)
-            if (Get("rotate", "").Length == 0)
+            if (Get(cfg, "rotate", "").Length == 0)
             {
-                Cfg["rotate"] = string.Join(",", KnownStyles(false).ToArray());
-                Cfg["rotateDark"] = string.Join(",", KnownStyles(true).ToArray());
+                cfg["rotate"] = string.Join(",", KnownStyles(false).ToArray());
+                cfg["rotateDark"] = string.Join(",", KnownStyles(true).ToArray());
             }
             return;
         }
-        Cfg["video"] = mode == "gradient" ? Path.Combine(Dir, "loop.mp4") : Path.Combine(Dir, "styles", mode + ".mp4");
-        Cfg["rotate"] = "";
+        cfg["video"] = mode == "gradient" ? Path.Combine(Dir, "loop.mp4") : Path.Combine(Dir, "styles", mode + ".mp4");
+        cfg["rotate"] = "";
     }
 
     // Changes when Loopscape.ini or the panel's Settings.inc is saved
@@ -159,7 +163,10 @@ static class Loopscape
         return s;
     }
 
-    const string PipeName = "loopscape";
+    // mpv's IPC pipe. Pipe names are machine-wide, so each Windows session gets its own: with two people signed in,
+    // one Loopscape must not steer (or quit) the other's mpv.
+    static readonly string PipeName = "loopscape-" + Process.GetCurrentProcess().SessionId;
+    const string LegacyPipeName = "loopscape";   // used by versions before the session number was added
     static void Log(string msg)
     {
         try { File.AppendAllText(Path.Combine(Dir, "Loopscape.log"), DateTime.Now.ToString("s") + " " + msg + Environment.NewLine); } catch { }
@@ -841,15 +848,30 @@ static class Loopscape
 
     // An mpv left playing by an earlier Loopscape that was force-closed (or crashed) still serves our pipe and would
     // keep playing behind the new one: ask whatever answers on the pipe to quit until nothing does.
+    // An mpv started by an earlier version listens on LegacyPipeName, which another session's mpv may use too, so it
+    // is only asked to quit when it runs in this session.
+    [DllImport("kernel32.dll")] static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint pid);
     static void QuitStrayMpv()
+    {
+        QuitStrayMpv(PipeName, false);
+        QuitStrayMpv(LegacyPipeName, true);
+    }
+    static void QuitStrayMpv(string pipeName, bool onlyThisSession)
     {
         for (int i = 0; i < 10; i++)
         {
             try
             {
-                using (var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut))
+                using (var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut))
                 {
                     pipe.Connect(300);
+                    if (onlyThisSession)
+                    {
+                        uint pid;
+                        if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out pid)) return;
+                        using (var server = Process.GetProcessById((int)pid))
+                            if (server.SessionId != Process.GetCurrentProcess().SessionId) return;
+                    }
                     var w = new StreamWriter(pipe); w.AutoFlush = true;
                     w.Write("{\"command\":[\"quit\"]}\n");
                 }
