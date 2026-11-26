@@ -1,0 +1,11 @@
+# The workflows pin each action to a commit SHA, so a moved tag can't change what runs. Dependabot opens a PR when
+# a pinned action has a new release, and the check workflow builds it like any other change.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
