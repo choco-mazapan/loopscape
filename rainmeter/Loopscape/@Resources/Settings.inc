@@ -25,6 +25,8 @@ TextEffect=Shadow
 TextBoost=5
 ; Rounded pills behind each text line when the panel tint is off (1 = on)
 TextPills=1
+; Animate the clock's weather icon: falling rain and snow, twinkling stars, flashing lightning (1 = on)
+AnimateWeather=0
 ; Adaptive text colour when the panel tint is off: off, contrast (white/dark), smooth (white/dark with fades, checked
 ; every second), tinted (colours taken from the wallpaper), smoothtinted, perline (each line on its own)
 TextColorMode=contrast

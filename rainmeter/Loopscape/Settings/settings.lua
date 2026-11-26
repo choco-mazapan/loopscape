@@ -27,6 +27,8 @@ local ROWS = {
   { 'PanelAlpha',    'MeterVal4', { { '0', 'Off' }, { '110', 'Light' }, { '150', 'Medium' }, { '200', 'Dark' } } },
   { 'TextEffect',    'MeterVal8', { { 'Shadow', 'Shadow' }, { 'Border', 'Outline' }, { 'None', 'None' } } },
   { 'TextPills',     'MeterVal10', { { '1', 'On' }, { '0', 'Off' } } },
+  -- read by the clock's weather.lua (Animate)
+  { 'AnimateWeather', 'MeterVal24', { { '1', 'On' }, { '0', 'Off' } }, '0' },
   -- read by snap.lua in each widget (see BOOST there)
   { 'TextBoost',     'MeterVal18', { { '0', 'Off' }, { '1', '1 Soft shadow' }, { '2', '2 Drop shadow' }, { '3', '3 Halo' },
                                      { '4', '4 Outline + halo' }, { '5', '5 Bold + outline' }, { '6', '6 Maximum' } } },
@@ -261,6 +263,9 @@ local function apply(var, value)
     -- the clock's AM/PM text can move on the second pass, after its pill
     if w == 'Loopscape\\Clock' then SKIN:Bang('!UpdateMeter', 'Pill_MeterAmPm', w) end
     SKIN:Bang('!Redraw', w)
+  end
+  if var == 'AnimateWeather' and on(CLOCK) then
+    SKIN:Bang('!CommandMeasure', 'MeasureWeather', 'Animate()', CLOCK)
   end
   if var == 'SnapBottomMargin' then
     -- move widgets parked on a bottom spot (and anything stacked on them) to the new height

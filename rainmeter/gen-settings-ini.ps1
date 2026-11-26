@@ -218,6 +218,7 @@ $rows = @(
   @('Widgets',   4, 19, 'SnapBottomMargin', 'Bottom spots',             'Lower them over a clear taskbar'),
   @('Widgets',   5, 21, 'WeatherLocation', 'Weather location',          'A city you type, or Windows location'),
   @('Widgets',   6, 22, '#city',         'City',                        'Click to type it, then press Enter'),
+  @('Widgets',   7, 24, 'AnimateWeather', 'Animate weather icon',      'Rain falls, stars twinkle'),
   @('Look',      0, 18, 'TextBoost',     'Text boost',                  'Readable text with no backdrop'),
   @('Look',      1, 8,  'TextEffect',    'Text effect',                 'Used while Text boost is off'),
   @('Look',      2, 9,  'TextColorMode', 'Text colour',                 'Adapts to the wallpaper (tint off)'),
