@@ -21,8 +21,9 @@ SnapSize=
 ; Which screen column the widget is in (0 left, 1 centre, 2 right), set by snap.lua: one-line views line their
 ; text up with it, so a stack reads as one block in every column
 ColumnAlign=0
-; Run by each widget as it closes ([Rainmeter] OnCloseAction): the others check who is still there (snap.lua PeerGone)
-SnapOnClose=[!CommandMeasure MeasureSnap "PeerGone()" "Loopscape\Clock"][!CommandMeasure MeasureSnap "PeerGone()" "Loopscape\WiFi"][!CommandMeasure MeasureSnap "PeerGone()" "Loopscape\NowShowing"][!CommandMeasure MeasureSnap "PeerGone()" "Loopscape\SunMoon"][!CommandMeasure MeasureSnap "PeerGone()" "Loopscape\Rain"][!CommandMeasure MeasureSnap "PeerGone()" "Loopscape\System"][!CommandMeasure MeasureSnap "PeerGone()" "Loopscape\Calendar"]
+; Run by each widget as it closes ([Rainmeter] OnCloseAction): it tells the widgets that are running, which then
+; check who is still there (snap.lua Closing, PeerGone)
+SnapOnClose=[!CommandMeasure MeasureSnap "Closing()"]
 
 [MeasureSnap]
 Measure=Script
