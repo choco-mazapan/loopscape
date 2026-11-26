@@ -1,30 +1,20 @@
 # Loopscape
 
-**Loopscape** is a live wallpaper for Windows 10 and 11. It plays looping animated landscapes (shores, pixel clouds, auroras, nebulas and more) behind your desktop icons, with dark styles at night. It comes with desktop widgets for Rainmeter: a clock with battery and weather, Wi‑Fi and network details, a Now Showing card for the wallpaper itself, and optional Sun & Moon, Rain, System and Calendar widgets. They live in `Documents\Rainmeter\Skins\Loopscape`.
+Loopscape is a live wallpaper for Windows 10 and 11. It plays looping animated landscapes (shores, pixel clouds, auroras, nebulas and more) behind your desktop icons and switches to dark styles at night. It comes with a set of desktop widgets, drawn by [Rainmeter](https://www.rainmeter.net/), that show the time, weather, battery, network and more, and move to a quiet spot on each wallpaper.
 
-![Riso style with the Loopscape widgets](screenshots/riso.jpg)
+![The Riso waves style with the System, Wi‑Fi and Clock widgets](screenshots/desktop.jpg)
 
-## Screenshots
-
-Each style is a looping video; the widgets snap to a spot that suits it.
-
-![The shore style animating](screenshots/shore.gif)
-
-*The shore loop (40 s, shown here at 5× speed).*
-
-![All styles](screenshots/gallery.jpg)
-
-| | | |
-|---|---|---|
-| ![Pixel clouds](screenshots/pixelclouds.jpg) **pixelclouds** | ![Shore](screenshots/shore.jpg) **shore** | ![Sunset](screenshots/sunset.jpg) **sunset** |
-| ![Blue sky](screenshots/bluesky.jpg) **bluesky** | ![Halftone](screenshots/halftone.jpg) **halftone** | ![Aurora](screenshots/aurora.jpg) **aurora** |
-| ![Nebula](screenshots/nebula.jpg) **nebula** | ![Moon](screenshots/moon.jpg) **moon** | ![Riso](screenshots/riso.jpg) **riso** |
-
-Dark styles (aurora, nebula, moon, …) rotate in at night.
+- [Install](#install)
+- [Wallpaper styles](#wallpaper-styles)
+- [Widgets](#widgets)
+- [Using Loopscape](#using-loopscape)
+- [Make your own style with Claude](#make-your-own-style-with-claude)
+- [Privacy and what it changes on your PC](#privacy-and-what-it-changes-on-your-pc)
+- [Building from source](#building-from-source)
 
 ## Install
 
-Works on Windows 10 and 11 (64-bit).
+Loopscape works on 64-bit Windows 10 and 11.
 
 1. Download `Loopscape-Setup-<version>.exe` from [Releases](https://github.com/choco-mazapan/loopscape/releases).
 2. Run it. It installs for your user only, so there's no administrator prompt (except Rainmeter's own installer, if you tick it).
@@ -32,90 +22,168 @@ Works on Windows 10 and 11 (64-bit).
 
 The installer isn't code-signed yet, so Windows SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**. `SHA256SUMS.txt` on the release page has the installer's checksum, and the [release workflow](.github/workflows/release.yml) log shows it was built from the tagged source.
 
-Four styles come with the installer (riso, shore, pixel clouds, aurora). On the **Wallpaper styles** page, choose whether to download the other 15 after setup (about 250 MB): all of them, none, or the ones you tick. They download in the background, about 2–50 MB each depending on the video format. Any you skip download the first time you pick them, or all at once from the tray icon's menu.
+Four styles come with the installer (riso, shore, pixel clouds and aurora). On the **Wallpaper styles** page, choose whether to download the other 15 after setup (about 250 MB in total): all of them, none, or the ones you tick. They download in the background, about 2–50 MB each depending on the video format. Any you skip download the first time you pick them, or all at once from the tray icon's menu.
 
-## Usage
+## Wallpaper styles
 
-- **Pick a style:** click the tray icon for the widgets' Settings panel, or right-click it for the style menu.
-- **Rotate styles:** choose *Rotate day/night* in the Settings panel. It changes style every hour by default (*Change every* in the Rotation section), with dark styles at night.
-- **Skip to the next style:** Win+Alt+N.
-- **Now Showing widget:** shows the style on screen and when the rotation changes it, with buttons to go back, pause the animation, skip ahead or keep the current style. Hide it in Settings → Widgets.
-- **More widgets:** Settings → Widgets has a tile for each widget; click one to show or hide it. The extra ones start hidden:
-  - **Sun & Moon:** the sun's path across today's sky, the next sunrise or sunset, and the moon's phase.
-  - **Rain:** rain or snow in the next 3 hours, in 15-minute steps ("Rain in ~20 min").
-  - **System:** processor and memory use, and free space on drive C:.
-  - **Calendar:** this month with today ringed; scroll over it for other months. The week starts on the day set in Windows.
-- **Views:** middle-click a widget to switch between its full and simple views.
-- **Always animate:** a checkbox in the tray menu that keeps the wallpaper moving on battery and behind maximized or fullscreen windows. It overrides Settings → Rotation → *On battery* and *Pause when covered*, and uses more battery. *Pause animation* still works.
-- **Start with Windows:** a checkbox in the tray menu (also in Task Manager → Startup apps).
-- **Update Loopscape:** in the tray menu, and in Settings → Look. If you installed with the setup program, it opens the [Releases](https://github.com/choco-mazapan/loopscape/releases) page so you can download the newest installer. If you run Loopscape from a git clone of this repository (see [Building from source](#building-from-source)), it opens a window that lists the new changes on GitHub with this PC's version and the new one. Press **Update** to get them: a progress bar follows the rebuild, and the window then shows what was updated.
-- **Video format:** the tray menu's *Video format*. *Automatic* picks the smallest format your graphics chip plays (AV1, then HEVC, then H.264), so the CPU stays idle. On a desktop where battery doesn't matter you can pick AV1 for smaller files even if the CPU has to decode it. Changing it downloads your styles again in that format. Styles that don't look as good in a format are only published in H.264.
+Each style is a 1080p video that loops without a visible jump.
+
+![The shore style animating](screenshots/shore.gif)
+
+*The shore loop (40 seconds, shown here at 5× speed).*
+
+### Day styles
+
+| | | |
+|---|---|---|
+| ![Spectrum](screenshots/spectrum.jpg) **Spectrum** | ![Halftone](screenshots/halftone.jpg) **Halftone** | ![Blue sky](screenshots/bluesky.jpg) **Blue sky** |
+| ![Pixel clouds](screenshots/pixelclouds.jpg) **Pixel clouds** | ![Sunset strata](screenshots/sunset.jpg) **Sunset strata** | ![Riso waves](screenshots/riso.jpg) **Riso waves** |
+| ![Dunes](screenshots/dunes.jpg) **Dunes** | ![Lake](screenshots/lake.jpg) **Lake** | ![Pastel aurora](screenshots/pastel.jpg) **Pastel aurora** |
+| ![CRT test card](screenshots/crt.jpg) **CRT test card** | ![Shore](screenshots/shore.jpg) **Shore** |  |
+
+Gradient is also a day style.
+
+### Night styles
+
+Dark styles rotate in at night.
+
+| | | |
+|---|---|---|
+| ![Night clouds](screenshots/nightclouds.jpg) **Night clouds** | ![Aurora](screenshots/aurora.jpg) **Aurora** | ![Nebula](screenshots/nebula.jpg) **Nebula** |
+| ![Halftone moon](screenshots/moon.jpg) **Halftone moon** | ![Embers](screenshots/embers.jpg) **Embers** | ![Deep sea](screenshots/deepsea.jpg) **Deep sea** |
+| ![Rainy window](screenshots/rain.jpg) **Rainy window** |  |  |
+
+Bouncing logo is also a night style.
+
+## Widgets
+
+All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Wi‑Fi and Now Showing start visible; the others start hidden. Show or hide any of them from the tiles in **Settings → Widgets**.
+
+| Widget | What it shows |
+|---|---|
+| **Clock** | The time and date, battery level and time left, the current weather and a three-day forecast. |
+| **Wi‑Fi** | The network name and signal, band, channel, link speed, security and local IP address, plus live ping and download and upload speed. |
+| **Now Showing** | The wallpaper style on screen and when rotation will change it, with buttons to go back, pause, skip ahead or keep the current style. |
+| **Sun & Moon** | The sun's path across today's sky, the next sunrise or sunset, and the moon's phase. |
+| **Rain** | Rain or snow in the next 3 hours in 15-minute steps, such as "Rain in ~20 min". |
+| **System** | Processor and memory use, and free space on drive C:. |
+| **Calendar** | This month with today circled. Scroll over it to see other months. The week starts on the day set in Windows. |
+
+**Placement.** Each wallpaper style suggests a calm spot for the widgets, and they move there when the style changes (Settings → Rotation → *Move widgets with wallpaper*). Drag a widget and it snaps to screen spots and to the other widgets; stacked widgets share one width. Settings → Widgets has switches for snapping, matching widths, and how far the bottom spots sit from the taskbar.
+
+**Views.** Middle-click a widget, or right-click it, to pick a view. The Clock, for example, has Full, Simple, Compact and Time only.
+
+**Readability.** Settings → Look controls how the text stands out from the wallpaper: a text boost from a soft shadow to a bold outline, text colour that adapts to the wallpaper, a tinted panel behind the text, and pills behind each line.
+
+## Using Loopscape
+
+Click the Loopscape tray icon to open the widgets' Settings panel, or right-click it for the menu.
+
+### Pick and rotate styles
+
+- **Pick a style:** Settings → Wallpaper, or the tray menu's *Change wallpaper*. Right-click a style in Settings to leave it out of rotation.
+- **Rotate day/night:** changes style every hour by default (Settings → Rotation → *Change every*). Night styles take over at a set time or from sunset to sunrise, With *Match the weather* on, rain brings Rainy window, a clear night brings Halftone moon, and overcast or foggy skies bring clouds.
+- **Skip to the next style:** Win+Alt+N, the Now Showing widget, or a widget's right-click menu.
+
+### Battery and performance
+
+- **On battery:** Settings → Rotation → *On battery* pauses the animation by default. You can keep it playing or switch to a still image.
+- **Pause when covered:** the animation pauses while a maximized or fullscreen window covers the desktop.
+- **Always animate:** a checkbox in the tray menu that keeps the wallpaper moving on battery and behind maximized or fullscreen windows. It overrides *On battery* and *Pause when covered*, and uses more battery. *Pause animation* still works.
+- **Video format:** the tray menu's *Video format*. *Automatic* picks the smallest format your graphics chip plays (AV1, then HEVC, then H.264), so the processor stays idle. On a desktop where battery doesn't matter you can pick AV1 for smaller files even if the processor has to decode it. Changing it downloads your styles again in that format. Styles that don't look as good in a format are only published in H.264.
 - **Big screens:** the styles are 1080p videos scaled up to fit your screen. On 4K screens the square-pixel styles use sharp 2× scaling, so they look as crisp as on a 1080p screen (`sharpScaling` in Loopscape.ini).
-- **Weather location:** Settings panel → Widgets → City.
-- **Advanced settings:** `%USERPROFILE%\Loopscape\Loopscape.ini` (commented; changes apply by themselves).
+
+### Other settings
+
+- **Weather location:** Settings → Widgets → *Weather location*. Type a city, or use Windows location.
+- **Clock format and temperature unit:** Settings → Widgets.
+- **Start with Windows:** a checkbox in the tray menu (also in Task Manager → Startup apps).
+- **Advanced settings:** `%USERPROFILE%\Loopscape\Loopscape.ini`. It's commented, and changes apply on their own.
+
+### Update Loopscape
+
+*Update Loopscape* is in the tray menu and in Settings → Look.
+
+- If you installed with the setup program, it opens the [Releases](https://github.com/choco-mazapan/loopscape/releases) page so you can download the newest installer.
+- If you run Loopscape from a git clone of this repository (see [Building from source](#building-from-source)), it opens a window that lists the new changes on GitHub with this PC's version and the new one. Press **Update** to get them: a progress bar follows the rebuild, and the window then shows what was updated.
 
 ## Make your own style with Claude
 
-[`skills/loopscape-style`](skills/loopscape-style) is a [Claude skill](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview) that turns your own photo or video into a Loopscape style: LED dots, halftone, dither, duotone or pixel art, as a 1920×1080 video that loops without a jump. Ask Claude something like *"make this photo into a Loopscape wallpaper"*. It shows you a few looks, then makes the video and adds it to Loopscape's tray menu (right-click → *Change wallpaper*).
+[`skills/loopscape-style`](skills/loopscape-style) is a [Claude skill](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview) that turns your own photo or video into a Loopscape style: LED dots, halftone, dither, duotone or pixel art, as a 1920×1080 video that loops without a jump. Ask Claude something like *"make this photo into a Loopscape wallpaper"*. It shows you a few looks, then makes the video and adds it to the tray menu's *Change wallpaper*.
 
 - **Claude Code** (or the Code tab of the Claude desktop app): copy the `skills\loopscape-style` folder to `%USERPROFILE%\.claude\skills\`. Claude installs what it needs (Python's Pillow and NumPy, and FFmpeg) if they're missing.
-- **Claude.ai**: zip the folder and add it under Settings → Capabilities → Skills. It runs in the cloud, so Claude hands you the video and a picture of it to put in `%USERPROFILE%\Loopscape\styles` yourself.
+- **Claude.ai**: zip the folder and add it under Settings → Capabilities → Skills. It runs in the cloud, so Claude gives you the video and a still image to put in `%USERPROFILE%\Loopscape\styles` yourself.
 
 Your own styles aren't part of *Rotate day/night*; pick them from the tray menu. The dot effects come from [dotfx](https://github.com/thibaud360/dotfx) by Thibaud Francony (MIT license), included in the skill.
 
-## What it changes on your PC
+## Privacy and what it changes on your PC
 
-| What | Where | Removed by uninstall |
-|---|---|---|
-| The program (Loopscape, mpv video player, list of downloadable styles) | `%LOCALAPPDATA%\Programs\Loopscape` | yes |
-| Videos, stills, Loopscape.ini, log | `%USERPROFILE%\Loopscape` | if you choose to |
-| Status files Loopscape and the widgets share while they run, weather cache | `%LOCALAPPDATA%\Loopscape` | yes |
-| The widgets | `Documents\Rainmeter\Skins\Loopscape` | yes (your settings only if you choose to) |
-| Start with Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` → `Loopscape` | yes |
-| Apps list entry | Settings → Apps → Installed apps | yes |
-| Rainmeter (optional) | installed by its official installer | no: uninstall it separately |
-
-It needs no administrator rights, runs no scripts, and doesn't change your Windows wallpaper settings. It connects to:
+Loopscape needs no administrator rights, runs no scripts, and doesn't change your Windows wallpaper settings. It connects to:
 
 - [Open-Meteo](https://open-meteo.com/) for the weather and to look up your city (no account, no API key).
 - [BigDataCloud](https://www.bigdatacloud.com/), only if you choose *Windows location*, to name the place.
 - GitHub, to download styles you pick, and when you choose *Update Loopscape*.
 
-There's no IP-address location lookup, telemetry or automatic update check: Loopscape only looks for a new version when you choose *Update Loopscape*.
+There's no IP-address location lookup, telemetry or automatic update check. Loopscape only looks for a new version when you choose *Update Loopscape*.
 
-To uninstall, use Settings → Apps → Loopscape → Uninstall. It asks whether to also delete your videos and settings.
+| What | Where | Removed by uninstall |
+|---|---|---|
+| The program (Loopscape, mpv video player, list of downloadable styles) | `%LOCALAPPDATA%\Programs\Loopscape` | Yes |
+| Videos, stills, Loopscape.ini, log | `%USERPROFILE%\Loopscape` | If you choose to |
+| Status files Loopscape and the widgets share while they run, weather cache | `%LOCALAPPDATA%\Loopscape` | Yes |
+| The widgets | `Documents\Rainmeter\Skins\Loopscape` | Yes (your widget settings only if you choose to) |
+| Start with Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` → `Loopscape` | Yes |
+| Apps list entry | Settings → Apps → Installed apps | Yes |
+| Rainmeter (optional) | Installed by its official installer | No, uninstall it separately |
+
+To uninstall, go to Settings → Apps → Loopscape → Uninstall. It asks whether to also delete your videos and settings.
 
 ## Building from source
 
-Developer setup. Users don't need any of this.
+This section is for developers. You don't need any of it to use Loopscape.
 
-- `wallpaper/` holds the Loopscape launcher (`Loopscape.cs`) and the video and still renderers (`make-loop.ps1`, `styles/`).
-- `rainmeter/Loopscape/` is the Rainmeter skin (Clock, WiFi, NowShowing, SunMoon, Rain, System, Calendar, Settings, ViewMenu, SnapGuides). Versions before 1.1 installed it as `Skins\LaptopInfo`; the installer moves it.
-- `rainmeter/WeatherFetch.cs` and `rainmeter/WifiInfo.cs` are the helpers the skin calls.
-- `build/build.ps1` compiles everything with the C# compiler built into Windows (.NET Framework 4.x).
-- `build/stage.ps1` and `installer/Loopscape.iss` ([Inno Setup](https://jrsoftware.org/isinfo.php)) build the installer.
-- `skills/loopscape-style/` is the Claude skill for making your own styles (`make_style.py`, with dotfx's `dotfx.py`).
-- `sync.ps1` pushes your working copy to the running setup: it rebuilds what changed, copies the skin and restarts Loopscape. It also saves the clone's folder as `sourceFolder` in Loopscape.ini.
-- `update.ps1` is what *Update Loopscape* runs when `sourceFolder` is set: it fetches `origin/main` and lists the new commits; after you press Update it fast-forwards the clone and runs `sync.ps1 -Progress`, then shows the result (details in `%USERPROFILE%\Loopscape\update.log`). If the clone has local changes or is on another branch, the window says so: Update sets them aside with `git stash` and switches to `main`. Run `git stash pop` to bring the changes back. Versions are the last `v` tag plus the number of commits since it (`v1.0.0` + 45 commits = 1.0.0.45). `update.ps1 -DryRun` changes nothing.
+### Repository layout
 
-Rendering the videos needs [FFmpeg](https://ffmpeg.org/) with libx265, libsvtav1 and libvmaf (`winget install Gyan.FFmpeg`, the full build). The loop goes to `%USERPROFILE%\Loopscape`; each style is rendered once and encoded as H.264, HEVC and AV1 into `build\videos`:
+| Path | Contents |
+|---|---|
+| `wallpaper/` | The Loopscape launcher (`Loopscape.cs`) and the video and still renderers (`make-loop.ps1`, `styles/`). |
+| `rainmeter/Loopscape/` | The Rainmeter skin: Clock, WiFi, NowShowing, SunMoon, Rain, System, Calendar, Settings, ViewMenu and SnapGuides, with shared code in `@Resources` (`snap.lua` handles placement and snapping). Versions before 1.1 installed it as `Skins\LaptopInfo`; the installer moves it. |
+| `rainmeter/WeatherFetch.cs`, `rainmeter/WifiInfo.cs` | Helpers the skin calls. |
+| `rainmeter/gen-settings-ini.ps1` | Generates `Settings/Settings.ini`. Edit the script, not the generated file. |
+| `build/` | `build.ps1` compiles everything with the C# compiler built into Windows (.NET Framework 4.x). `stage.ps1` and `make-styles-release.ps1` prepare a release. |
+| `installer/` | The [Inno Setup](https://jrsoftware.org/isinfo.php) script (`Loopscape.iss`) and the list of downloadable styles with their checksums. |
+| `skills/loopscape-style/` | The Claude skill for making your own styles (`make_style.py`, with dotfx's `dotfx.py`). |
+| `sync.ps1` | Pushes your working copy to the running setup: it rebuilds what changed, copies the skin and restarts Loopscape. It also saves the clone's folder as `sourceFolder` in Loopscape.ini. |
+| `update.ps1` | What *Update Loopscape* runs when `sourceFolder` is set. See below. |
+
+### Run from a clone
+
+Clone the repository and run `.\sync.ps1`. After that, *Update Loopscape* runs `update.ps1`, which fetches `origin/main` and lists the new commits. After you press **Update**, it fast-forwards the clone, runs `sync.ps1 -Progress` and shows the result (details in `%USERPROFILE%\Loopscape\update.log`). If the clone has local changes or is on another branch, the window says so, and Update sets them aside with `git stash` and switches to `main`. Run `git stash pop` to bring the changes back.
+
+Versions are the last `v` tag plus the number of commits since it (`v1.0.0` plus 45 commits is 1.0.0.45). `update.ps1 -DryRun` changes nothing.
+
+### Checks
+
+Every pull request and every push to `main` runs the [check workflow](.github/workflows/check.yml). It compiles the programs with `build\build.ps1`, parses every PowerShell script, confirms `Settings.ini` matches what `gen-settings-ini.ps1` generates, and parses every Lua script (with Lua 5.1, the version Rainmeter runs) and every Python script in the skill.
+
+### Render the videos
+
+Rendering needs [FFmpeg](https://ffmpeg.org/) with libx265, libsvtav1 and libvmaf (`winget install Gyan.FFmpeg`, the full build). The loop goes to `%USERPROFILE%\Loopscape`; each style is rendered once and encoded as H.264, HEVC and AV1 into `build\videos`:
 
 ```powershell
 .\wallpaper\make-loop.ps1
 .\wallpaper\styles\build-styles.ps1
 ```
 
-HEVC and AV1 files are kept only if they're at least 15% smaller than H.264 and score within 1 VMAF point of it against a lossless render (`-MinSaving`, `-MaxVmafLoss`; results in `build\videos\quality.txt`). A full render takes about 2 hours of CPU. `build-styles.ps1 -Styles riso,shore` renders only some styles, and `-Preview` renders one still per style. `wallpaper\styles\make-stills.ps1` renders PNG stills for use as a normal Windows background.
+HEVC and AV1 files are kept only if they're at least 15% smaller than H.264 and score within 1 VMAF point of it against a lossless render (`-MinSaving`, `-MaxVmafLoss`; results in `build\videos\quality.txt`). A full render takes about 2 hours of CPU time. `build-styles.ps1 -Styles riso,shore` renders only some styles, and `-Preview` renders one still per style. `wallpaper\styles\make-stills.ps1` renders PNG stills to use as a normal Windows background.
 
-To make a release:
+### Make a release
 
 1. Run `build\make-styles-release.ps1`.
 2. Upload `build\styles-release` to the `styles-v1` release.
 3. Commit `installer\styles.json` and `installer\styles-SHA256SUMS.txt`.
 4. Push a `v*` tag. The [release workflow](.github/workflows/release.yml) builds the installer and makes a draft release.
 
-Fonts: Space Grotesk and Geist Pixel, bundled under their own licenses (see `rainmeter/Loopscape/@Resources/Fonts`).
-
 ## License
 
-[MIT](LICENSE). The bundled fonts keep their own licenses.
+[MIT](LICENSE). The bundled fonts, Space Grotesk and Geist Pixel, keep their own licenses (see `rainmeter/Loopscape/@Resources/Fonts`). Third-party components are listed in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).
