@@ -88,8 +88,9 @@ local function show()
   setOption('MeterBtn4', 'Text', s.rotating == '0' and GLYPH.unpin or GLYPH.pin)
   if style ~= thumbFor then
     thumbFor = style
-    local png = STYLES .. style .. '.png'
-    local ok = style ~= '' and style ~= 'loop' and exists(png)
+    -- the styles' first frames are styles\<style>.png; the Gradient (loop.mp4) has none, so the skin ships one
+    local png = (style == 'loop' or style == 'gradient') and (SKIN:GetVariable('@') .. 'gradient.png') or (STYLES .. style .. '.png')
+    local ok = style ~= '' and exists(png)
     setOption('MeterThumb', 'ImageName', ok and png or '')
     setVariable('ThumbOn', ok and 1 or 0)
   end

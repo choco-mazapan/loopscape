@@ -69,11 +69,13 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and No
 | **System** | Processor and memory use, and free space on drive C:. |
 | **Calendar** | This month with today circled. Scroll over it to see other months. The week starts on the day set in Windows. |
 
-**Placement.** Each wallpaper style suggests a calm spot for the widgets, and they move there when the style changes (Settings → Rotation → *Move widgets with wallpaper*). Drag a widget and it snaps to screen spots and to the other widgets; stacked widgets share one width. Settings → Widgets has switches for snapping, matching widths, and how far the bottom spots sit from the taskbar.
+**Placement.** Each wallpaper style suggests a calm spot for the widgets, and they move there when the style changes (Settings → Rotation → *Move widgets with wallpaper*). Drag a widget and it snaps to screen spots and to the other widgets; stacked widgets share one width. Settings → Widgets has switches for snapping, matching widths, and the height of the bottom snap spots (above the taskbar, over it, at the screen edge, or any number of pixels). It also sets the clock's date format.
 
 **Views.** Middle-click a widget, or right-click it, to pick a view. The Clock, for example, has Full, Simple, Compact and Time only, and Network has Full, Simple and Speeds.
 
-**Readability.** Settings → Look controls how the text stands out from the wallpaper: a text boost from a soft shadow to a bold outline, text colour that adapts to the wallpaper, a tinted panel behind the text, and pills behind each line.
+**Readability.** Settings → Look controls how the text stands out from the wallpaper. *Panel darkness* puts a dark box behind each widget. With the panel off, the text can sit on pills and turn light or dark to suit the wallpaper. *Text boost* adds anything from a soft shadow to a bold outline.
+
+**Profiles.** Settings → Profiles saves everything in the panel, plus each widget's view, to one of three slots. Load a slot to switch back to that setup.
 
 ## Using Loopscape
 
