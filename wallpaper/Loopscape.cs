@@ -87,7 +87,8 @@ static class Loopscape
     // Settings panel keys (Settings.inc) that override Loopscape.ini keys when set
     static readonly string[][] PanelKeys = {
         new[] { "WallExclude", "exclude" }, new[] { "WallRotateMinutes", "rotateMinutes" }, new[] { "WallNight", "nightMode" },
-        new[] { "WallWeather", "weatherMode" }, new[] { "WallOnBattery", "onBattery" }, new[] { "WallPauseCovered", "pauseWhenCovered" } };
+        new[] { "WallWeather", "weatherMode" }, new[] { "WallOnBattery", "onBattery" }, new[] { "WallPauseCovered", "pauseWhenCovered" },
+        new[] { "WallAlwaysAnimate", "alwaysAnimate" } };
 
     static void ReadIni(string path, Dictionary<string, string> into)
     {
@@ -1225,15 +1226,20 @@ static class Loopscape
         pause.Checked = userPaused;
         pause.Click += delegate { userPaused = !userPaused; Wake.Set(); Log("tray: " + (userPaused ? "pause" : "play")); };
         menu.Items.Add(pause);
-        // Saved as alwaysAnimate= in Loopscape.ini; the main loop picks it up through its settings reload
-        bool always = ini.TryGetValue("alwaysAnimate", out v) && IsTrue(v);
+        // Same setting as Settings panel > Rotation > Always animate: WallAlwaysAnimate in Settings.inc, which wins over
+        // alwaysAnimate= in Loopscape.ini (where it lived before the panel had it). Saved to Settings.inc when the
+        // widgets are installed, so the panel shows the change; the main loop picks it up through its settings reload.
+        string incPath = Path.Combine(Res, "Settings.inc");
+        bool always = panel.TryGetValue("WallAlwaysAnimate", out v) && v.Trim().Length > 0 ? IsTrue(v)
+                    : ini.TryGetValue("alwaysAnimate", out v) && IsTrue(v);
         var force = new System.Windows.Forms.ToolStripMenuItem("Always animate");
         force.Checked = always;
         force.ToolTipText = "Keep the wallpaper moving on battery and behind full-screen windows (uses more battery)";
         force.Click += delegate
         {
             if (!always) userPaused = false;   // turning it on also resumes a paused wallpaper
-            SetLine(Path.Combine(Dir, "Loopscape.ini"), "alwaysAnimate", always ? "false" : "true", true);
+            if (File.Exists(incPath)) SetLine(incPath, "WallAlwaysAnimate", always ? "0" : "1", false);
+            else SetLine(Path.Combine(Dir, "Loopscape.ini"), "alwaysAnimate", always ? "false" : "true", true);
             Log("tray: always animate " + (always ? "off" : "on"));
         };
         menu.Items.Add(force);

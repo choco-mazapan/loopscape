@@ -6,13 +6,13 @@
 ; automatically when it is stacked.
 [Variables]
 SnapMargin=28
-; Gap under the bottom spots. Default only: the Settings panel ("Bottom spots") sets it in Settings.inc
+; Gap under the bottom spots. Default only: the Settings panel ("Bottom snap spots") sets it in Settings.inc
 SnapBottomMargin=76
 ; Space between stacked widgets
 SnapGap=12
-; Same, when the panel tint is off (PanelAlpha=0): the panels' padding is invisible then, so they overlap by this
-; much to bring the text lines together
-SnapGapClear=-28
+; Same, when the panel tint is off (PanelAlpha=0): the panels' padding (PanelPadding=14 in each widget) is invisible
+; then, so they overlap by this much to keep the same 12 px between the text lines (14 + 14 - 16)
+SnapGapClear=-16
 ; Widgets that know about each other (config names, separated by |)
 SnapPeers=Loopscape\Clock|Loopscape\WiFi|Loopscape\NowShowing|Loopscape\SunMoon|Loopscape\Rain|Loopscape\System|Loopscape\Calendar
 SnapAttach=

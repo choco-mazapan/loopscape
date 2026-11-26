@@ -203,7 +203,7 @@ end
 -- Where this widget goes when stacked above/below peer rect r
 local function stackPos(r, rel, w, h)
   local sx, _, sw, _ = screen()
-  local gap = (num('PanelAlpha', 0) == 0) and num('SnapGapClear', -28) or num('SnapGap', 12)
+  local gap = (num('PanelAlpha', 0) == 0) and num('SnapGapClear', -16) or num('SnapGap', 12)
   local cx = r[1] + r[3] / 2 - sx
   local x
   if cx < sw / 3 then x = r[1]                           -- left column: align left edges
