@@ -5,6 +5,12 @@
 MatchWidths=1
 ; Snap widgets to screen spots / each other after dragging (1 = on)
 SnapEnabled=1
+; How close (px) a dropped widget must be to a screen spot or another widget's edge to snap to it
+SnapRadius=48
+; Dropped farther away: move to the nearest point of a grid (1) or stay exactly where dropped (0)
+SnapGrid=1
+; Grid spacing (px)
+SnapGridSize=24
 ; Gap below the bottom-left / bottom-centre / bottom-right snap spots: 76 clears the taskbar, 28 sits over a
 ; transparent taskbar (same margin as the other edges), 8 hugs the bottom of the screen
 SnapBottomMargin=76

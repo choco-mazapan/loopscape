@@ -342,11 +342,13 @@ static class Loopscape
     static string Playing
     {
         get { return playing; }
-        set { playing = value; PublishStyle(value, publishFadeMs); publishFadeMs = 0; }
+        set { playing = value; if (!holdPublish) PublishStyle(value, 0); }
     }
-    // Length of the crossfade that is about to show the new style (0 = it appears at once). Written as the second line
-    // of wallstyle.txt ("fade=<ms>") so the widgets fade out, move while the wallpapers blend, and fade back in.
-    static int publishFadeMs;
+    // Set while a crossfade is being prepared: SwitchTo publishes the style itself once the blend is on screen, with
+    // the crossfade's length as the second line of wallstyle.txt ("fade=<ms>"), so the widgets fade out, move at the
+    // crossfade's midpoint and fade back in. Publishing it when the next file starts loading made the widgets move
+    // before the wallpaper visibly changed, because loading a video can take a second or more.
+    static bool holdPublish;
     static string lastPublished;
     static void PublishStyle(string video, int fadeMs)
     {
@@ -765,15 +767,17 @@ static class Loopscape
                 if (FileOptions(next) != "") opt = FileOptions(next) + "," + opt;
                 if (Ok(Cmd("{\"command\":[\"loadfile\"," + Q(next) + ",\"replace\",-1," + Q(opt) + "]}")))
                 {
-                    publishFadeMs = ms + 400;   // the ramp below starts ~0.4 s after this
                     // widgets moving for this style get their colours from its first frame (the new video starts
                     // there), since the screen shows a blend of both until the fade ends
                     string still = Path.ChangeExtension(next, ".png");
                     IncomingStill = File.Exists(still) ? still : null;
-                    Playing = next;
-                    WidgetThemes.Kick(800);     // sample right away for the widgets' destinations (moveto.txt)
+                    holdPublish = true;
+                    try { Playing = next; } finally { holdPublish = false; }
                     Thread.Sleep(300);          // let the old file's frame counter reset
                     WaitForFrames(2, 5000);
+                    // the blend is on screen and the ramp starts now: tell the widgets, so they move with it
+                    PublishStyle(next, ms);
+                    WidgetThemes.Kick(800);     // sample right away for the widgets' destinations (moveto.txt)
                     crossfaded = Ramp(1, 0, ms);
                     Thread.Sleep(150);
                     RemoveFilter();

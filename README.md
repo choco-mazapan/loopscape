@@ -69,7 +69,7 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and No
 | **System** | Processor and memory use, and free space on drive C:. |
 | **Calendar** | This month with today circled. Scroll over it to see other months. The week starts on the day set in Windows. |
 
-**Placement.** Each wallpaper style suggests a calm spot for the widgets, and they move there when the style changes (Settings → Rotation → *Move widgets with wallpaper*). Drag a widget and it snaps to screen spots and to the other widgets; stacked widgets share one width. Settings → Widgets has switches for snapping, matching widths, and how far the bottom spots sit from the taskbar.
+**Placement.** Each wallpaper style suggests a calm spot for the widgets, and they move there when the style changes (Settings → Rotation → *Move widgets with wallpaper*). Drop a widget near a screen spot, or next to another widget's edge or corners, and it snaps there; anywhere else it lines up on a grid. Widgets stacked on each other move together and share one width. Settings → Widgets has switches for snapping, matching widths, and how far the bottom spots sit from the taskbar.
 
 **Views.** Middle-click a widget, or right-click it, to pick a view. The Clock, for example, has Full, Simple, Compact and Time only, and Network has Full, Simple and Speeds.
 
