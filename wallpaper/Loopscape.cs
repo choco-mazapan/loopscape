@@ -1388,8 +1388,8 @@ static class Loopscape
     // checks for updates in the background.
     // With a git clone of the source (sourceFolder= in Loopscape.ini, which sync.ps1 fills in) it starts the clone's
     // update.ps1, which lists the new changes, and after you confirm pulls them and runs sync.ps1 with a progress bar.
-    // sync.ps1 may restart this program midway, so update.ps1 runs in its own process. Without a clone it opens the Releases page to get the newest installer.
-    const string ReleasesUrl = "https://github.com/choco-mazapan/loopscape/releases";
+    // sync.ps1 may restart this program midway, so update.ps1 runs in its own process. Without a clone it opens the newest release, which has the installer.
+    const string ReleasesUrl = "https://github.com/choco-mazapan/loopscape/releases/latest";
     const string UpdateMutexName = "Local\\LoopscapeUpdate";   // held by update.ps1 while it runs
     static string UpdateScript()
     {
@@ -1456,7 +1456,7 @@ static class Loopscape
             string script = UpdateScript();
             if (script == null)
             {
-                Log(from + ": update: no sourceFolder, opening the Releases page");
+                Log(from + ": update: no sourceFolder, opening the newest release");
                 Process.Start(ReleasesUrl);
                 return;
             }
