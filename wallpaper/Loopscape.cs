@@ -54,8 +54,11 @@ static class Loopscape
     // Dir: our data (Loopscape.ini, styles\, loop.mp4, log, static.jpg) - always %USERPROFILE%\Loopscape.
     static readonly string ExeDir = AppDomain.CurrentDomain.BaseDirectory;
     static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Loopscape");
-    static Dictionary<string, string> Cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    static string Get(string k, string d) { string v; return Cfg.TryGetValue(k, out v) && v.Length > 0 ? v : d; }
+    // The settings in effect. The tray, download and widget threads read them too, so LoadConfig builds a new
+    // dictionary and swaps it in whole instead of changing this one; never write to it.
+    static volatile Dictionary<string, string> Cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    static string Get(string k, string d) { return Get(Cfg, k, d); }
+    static string Get(Dictionary<string, string> cfg, string k, string d) { string v; return cfg.TryGetValue(k, out v) && v.Length > 0 ? v : d; }
     static bool GetBool(string k, bool d) { return IsTrue(Get(k, d ? "true" : "false")); }
     static bool IsTrue(string v) { v = v.Trim().ToLowerInvariant(); return v == "true" || v == "1" || v == "yes"; }
     static int GetInt(string k, int d) { int v; return int.TryParse(Get(k, ""), out v) ? v : d; }
@@ -100,26 +103,27 @@ static class Loopscape
 
     static void LoadConfig()
     {
-        Cfg.Clear();
-        ReadIni(Path.Combine(Dir, "Loopscape.ini"), Cfg);
+        var cfg = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        ReadIni(Path.Combine(Dir, "Loopscape.ini"), cfg);
         var panel = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try { ReadIni(Path.Combine(Res, "Settings.inc"), panel); } catch { }
         foreach (var k in PanelKeys)
         {
             string v;
-            if (panel.TryGetValue(k[0], out v) && v.Length > 0) Cfg[k[1]] = v;
+            if (panel.TryGetValue(k[0], out v) && v.Length > 0) cfg[k[1]] = v;
         }
         // The style picked in the panel / tray (Settings.inc WallpaperMode) wins over Loopscape.ini: a single style, or
         // "rotate". A style that isn't on disk yet is still chosen: CurrentVideo() downloads it and plays something else
         // meanwhile.
         string mode;
-        if (panel.TryGetValue("WallpaperMode", out mode)) ApplyMode(mode.Trim().ToLowerInvariant());
+        if (panel.TryGetValue("WallpaperMode", out mode)) ApplyMode(cfg, mode.Trim().ToLowerInvariant());
         // "Still image" picked in the panel: use the rendered stills (or each style's own first frame)
-        if (Get("onBattery", "") == "static" && Get("batteryStills", "").Length == 0 && panel.ContainsKey("WallOnBattery"))
+        if (Get(cfg, "onBattery", "") == "static" && Get(cfg, "batteryStills", "").Length == 0 && panel.ContainsKey("WallOnBattery"))
         {
             string pics = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Loopscape Stills");
-            Cfg["batteryStills"] = Directory.Exists(pics) ? pics : Path.Combine(Dir, "styles");
+            cfg["batteryStills"] = Directory.Exists(pics) ? pics : Path.Combine(Dir, "styles");
         }
+        Cfg = cfg;
     }
 
     // Every style Loopscape knows (bundled, or downloadable via styles.json), split into day and night
@@ -132,22 +136,22 @@ static class Loopscape
     }
 
     // mode: "rotate" (day styles by day, night styles at night) or one style name ("gradient" = loop.mp4)
-    static void ApplyMode(string mode)
+    static void ApplyMode(Dictionary<string, string> cfg, string mode)
     {
         if (mode.Length == 0 || mode.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return;
         if (mode == "rotate")
         {
             // keep a hand-written rotation from Loopscape.ini; otherwise every style on this PC
             // (only styles on disk play: StyleList skips the others)
-            if (Get("rotate", "").Length == 0)
+            if (Get(cfg, "rotate", "").Length == 0)
             {
-                Cfg["rotate"] = string.Join(",", KnownStyles(false).ToArray());
-                Cfg["rotateDark"] = string.Join(",", KnownStyles(true).ToArray());
+                cfg["rotate"] = string.Join(",", KnownStyles(false).ToArray());
+                cfg["rotateDark"] = string.Join(",", KnownStyles(true).ToArray());
             }
             return;
         }
-        Cfg["video"] = mode == "gradient" ? Path.Combine(Dir, "loop.mp4") : Path.Combine(Dir, "styles", mode + ".mp4");
-        Cfg["rotate"] = "";
+        cfg["video"] = mode == "gradient" ? Path.Combine(Dir, "loop.mp4") : Path.Combine(Dir, "styles", mode + ".mp4");
+        cfg["rotate"] = "";
     }
 
     // Changes when Loopscape.ini or the panel's Settings.inc is saved
@@ -159,7 +163,10 @@ static class Loopscape
         return s;
     }
 
-    const string PipeName = "loopscape";
+    // mpv's IPC pipe. Pipe names are machine-wide, so each Windows session gets its own: with two people signed in,
+    // one Loopscape must not steer (or quit) the other's mpv.
+    static readonly string PipeName = "loopscape-" + Process.GetCurrentProcess().SessionId;
+    const string LegacyPipeName = "loopscape";   // used by versions before the session number was added
     static void Log(string msg)
     {
         try { File.AppendAllText(Path.Combine(Dir, "Loopscape.log"), DateTime.Now.ToString("s") + " " + msg + Environment.NewLine); } catch { }
@@ -242,18 +249,43 @@ static class Loopscape
 
     static string Num(double d) { return d.ToString("0.###", CultureInfo.InvariantCulture); }
 
-    // Video filter that blends the static wallpaper (fill-cropped to the screen) over the video.
-    // opacity 1 = only the wallpaper, 0 = only the video.
-    static string BlendFilter(double opacity) { return BlendFilter("static.jpg", opacity); }
-    static string BlendFilter(string image, double opacity)
+    // Video filter that blends the static wallpaper over the video. opacity 1 = only the wallpaper, 0 = only the video.
+    static string BlendFilter(string video, double opacity)
     {
-        int w = GetSystemMetrics(0), h = GetSystemMetrics(1);
-        string size = w + ":" + h;
-        return "@xf:lavfi=[movie=" + image + ",scale=" + size + ":force_original_aspect_ratio=increase,crop=" + size +
-               ",scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[s];" +
-               "[in]hwdownload,format=nv12,scale=" + size + ",format=yuv420p[v];" +
+        return BlendGraph("movie=static.jpg", ",scale=out_color_matrix=bt709:out_range=tv", BlendSize(video), opacity);
+    }
+
+    // The blend filters of the fade-in and the crossfade: [s] (an image or the previous video, decoded by the filter
+    // itself) over [in] (the new video, decoded on the GPU and copied back for the blend). Both are fill-cropped to the
+    // screen's shape, like mpv shows the video (--panscan=1.0). The blend runs on the CPU, so it happens at the
+    // smaller of the video's and the screen's resolution (BlendSize), and mpv scales the result up on the GPU as it
+    // does for the video alone: at 4K the 1080p styles blend a quarter of the pixels, and nothing changes on screen
+    // when the filter is dropped at the end of the fade.
+    static string BlendGraph(string source, string sourceExtra, int[] size, double opacity)
+    {
+        string wh = size[0] + ":" + size[1];
+        string fill = "scale=" + wh + ":force_original_aspect_ratio=increase,crop=" + wh;
+        return "@xf:lavfi=[" + source + "," + fill + sourceExtra + ",format=yuv420p[s];" +
+               "[in]hwdownload,format=nv12," + fill + ",format=yuv420p[v];" +
                "[s][v]blend=all_mode=normal:all_opacity=" + Num(opacity) + ":shortest=0:repeatlast=1[out]]";
     }
+
+    // Size the blend filters work at: the screen's shape, as many lines as the part of the video that is shown (or as
+    // the screen, if that has fewer). Screen size if the video's size can't be read. Even numbers, for yuv420p.
+    static int[] BlendSize(string video)
+    {
+        int sw = GetSystemMetrics(0), sh = GetSystemMetrics(1);
+        int[] v = Mp4.VideoSize(video);
+        if (v == null || sw <= 0 || sh <= 0) return new[] { sw, sh };
+        double shownLines = Math.Min(v[1], v[0] * (double)sh / sw);   // the video's height after cropping to the screen's shape
+        int h = (int)Math.Min(sh, shownLines) & ~1;
+        int w = (int)Math.Round(h * (double)sw / sh) & ~1;
+        return h < 2 || w < 2 ? new[] { sw, sh } : new[] { w, h };
+    }
+
+    // Quit holds MpvGate while it stops mpv, and StartMpv while it starts one, so no mpv starts once Quit has begun
+    static readonly object MpvGate = new object();
+    static volatile bool quitting;
 
     static void StartMpv(IntPtr host, bool startOnWallpaper)
     {
@@ -265,14 +297,18 @@ static class Loopscape
                       " --hwdec=auto-safe --panscan=1.0 --really-quiet --idle=no" +
                       " --media-controls=no" +   // keep the wallpaper out of Windows' media flyout (SMTC)
                       " --input-ipc-server=\\\\.\\pipe\\" + PipeName;
-        if (startOnWallpaper) args += " \"--vf=" + BlendFilter(1) + "\"";
+        if (startOnWallpaper) args += " \"--vf=" + BlendFilter(video, 1) + "\"";
         args += " " + Get("mpvArgs", "");
         args += SharpScaling(video) ? " --{ --scale=nearest \"" + video + "\" --}" : " \"" + video + "\"";
         var psi = new ProcessStartInfo(FindMpv(), args);
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
         psi.WorkingDirectory = Dir; // so the filter finds static.jpg
-        Mpv = Process.Start(psi);
+        lock (MpvGate)
+        {
+            if (quitting) return;
+            Mpv = Process.Start(psi);
+        }
         try { Mpv.EnableRaisingEvents = true; Mpv.Exited += delegate { Wake.Set(); }; } catch { }   // restart it right away
         MpvStarted = DateTime.Now;
         LastPaused = null;
@@ -676,6 +712,7 @@ static class Loopscape
             else Log("setting windows wallpaper failed: " + path);
         }
         catch (Exception e) { Log("setting windows wallpaper failed: " + e.Message); }
+        WidgetThemes.Kick();   // the widgets sit on a new picture
         LastStill = path;
     }
 
@@ -723,12 +760,7 @@ static class Loopscape
                     if (double.IsNaN(pos)) pos = 0;
                 }
                 double seek = Math.Max(0, pos + 0.25); // ~time mpv takes to open the next file
-                int w = GetSystemMetrics(0), h = GetSystemMetrics(1);
-                string size = w + ":" + h;
-                string graph = "@xf:lavfi=[movie=" + rel + ":seek_point=" + Num(seek) + ",setpts=PTS-STARTPTS," +
-                               "scale=" + size + ":force_original_aspect_ratio=increase,crop=" + size + ",format=yuv420p[s];" +
-                               "[in]hwdownload,format=nv12,scale=" + size + ",format=yuv420p[v];" +
-                               "[s][v]blend=all_mode=normal:all_opacity=1:shortest=0:repeatlast=1[out]]";
+                string graph = BlendGraph("movie=" + rel + ":seek_point=" + Num(seek) + ",setpts=PTS-STARTPTS", "", BlendSize(next), 1);
                 string opt = "vf=%" + Encoding.UTF8.GetByteCount(graph) + "%" + graph;
                 if (FileOptions(next) != "") opt = FileOptions(next) + "," + opt;
                 if (Ok(Cmd("{\"command\":[\"loadfile\"," + Q(next) + ",\"replace\",-1," + Q(opt) + "]}")))
@@ -824,15 +856,30 @@ static class Loopscape
 
     // An mpv left playing by an earlier Loopscape that was force-closed (or crashed) still serves our pipe and would
     // keep playing behind the new one: ask whatever answers on the pipe to quit until nothing does.
+    // An mpv started by an earlier version listens on LegacyPipeName, which another session's mpv may use too, so it
+    // is only asked to quit when it runs in this session.
+    [DllImport("kernel32.dll")] static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint pid);
     static void QuitStrayMpv()
+    {
+        QuitStrayMpv(PipeName, false);
+        QuitStrayMpv(LegacyPipeName, true);
+    }
+    static void QuitStrayMpv(string pipeName, bool onlyThisSession)
     {
         for (int i = 0; i < 10; i++)
         {
             try
             {
-                using (var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut))
+                using (var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut))
                 {
                     pipe.Connect(300);
+                    if (onlyThisSession)
+                    {
+                        uint pid;
+                        if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out pid)) return;
+                        using (var server = Process.GetProcessById((int)pid))
+                            if (server.SessionId != Process.GetCurrentProcess().SessionId) return;
+                    }
                     var w = new StreamWriter(pipe); w.AutoFlush = true;
                     w.Write("{\"command\":[\"quit\"]}\n");
                 }
@@ -1425,7 +1472,9 @@ static class Loopscape
     {
         Log("quit: " + why);
         try { if (tray != null) tray.Visible = false; } catch { }
-        StopMpv();
+        // Quit runs on the tray or quit-watch thread while the main loop keeps going: without the flag, the loop could
+        // see mpv gone and start a new one before Exit, which would then play on with nobody to stop it
+        lock (MpvGate) { quitting = true; StopMpv(); }
         Environment.Exit(0);
     }
 
@@ -1582,6 +1631,7 @@ static class Loopscape
                     }
                     else UpdateBatteryStill();   // hourly still rotation while on battery
                     PublishStatus(battery, batteryMode, windowCovers);
+                    WidgetThemes.SetWallpaperMoving(wantVideo && MpvRunning && !covered && !(battery && batteryMode == "pause"));
                 }
                 catch (Exception e) { Log("error: " + e.Message); }
 
@@ -1971,6 +2021,91 @@ static class Loopscape
 // Cost: per widget, four 1-pixel strips are copied from the screen per check and a few dozen pixels read; points covered
 // by other windows are skipped. The widget itself is never captured (it is drawn over the wallpaper, so the wallpaper
 // directly behind the text can't be seen - per-line mode estimates it from the wallpaper at the same height beside it).
+// Reads a video's size from its MP4/MOV header (the first track with a picture), without decoding anything
+static class Mp4
+{
+    static readonly Dictionary<string, int[]> cache = new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase);
+
+    // { width, height } in display pixels, or null for other containers and unreadable files
+    public static int[] VideoSize(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        string key;
+        try { var fi = new FileInfo(path); if (!fi.Exists) return null; key = fi.FullName + "|" + fi.Length + "|" + fi.LastWriteTimeUtc.Ticks; }
+        catch { return null; }
+        lock (cache)
+        {
+            int[] v;
+            if (cache.TryGetValue(key, out v)) return v;
+            try { v = Read(path); } catch (Exception e) { Loopscape.LogLine("video size: " + e.Message); v = null; }
+            cache[key] = v;
+            return v;
+        }
+    }
+
+    static int[] Read(string path)
+    {
+        using (var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        {
+            // the top-level boxes: skip to moov (it can be after the media data) and read it whole; it's small
+            long pos = 0, end = f.Length;
+            var head = new byte[16];
+            while (pos + 8 <= end)
+            {
+                f.Position = pos;
+                if (f.Read(head, 0, 16) < 8) return null;
+                long size = U32(head, 0); int hdr = 8;
+                string type = Encoding.ASCII.GetString(head, 4, 4);
+                if (size == 1) { size = (long)((ulong)U32(head, 8) << 32 | (uint)U32(head, 12)); hdr = 16; }
+                else if (size == 0) size = end - pos;
+                if (size < hdr) return null;
+                if (type == "moov")
+                {
+                    if (size > 64 << 20) return null;
+                    var moov = new byte[size - hdr];
+                    f.Position = pos + hdr;
+                    int got = 0, n;
+                    while (got < moov.Length && (n = f.Read(moov, got, moov.Length - got)) > 0) got += n;
+                    return got == moov.Length ? FromMoov(moov) : null;
+                }
+                pos += size;
+            }
+        }
+        return null;
+    }
+
+    // moov > trak > tkhd: width and height are its last two 16.16 fixed-point fields (0 for sound tracks)
+    static int[] FromMoov(byte[] b)
+    {
+        foreach (var trak in Children(b, 0, b.Length, "trak"))
+            foreach (var tkhd in Children(b, trak[0], trak[1], "tkhd"))
+            {
+                int start = tkhd[0], len = tkhd[1] - tkhd[0];
+                int fields = 4 + (b[start] == 1 ? 32 : 20) + 52;   // version/flags, times and ids, then up to width
+                if (len < fields + 8) continue;
+                long w = U32(b, start + fields) >> 16, h = U32(b, start + fields + 4) >> 16;
+                if (w > 0 && h > 0 && w <= 16384 && h <= 16384) return new[] { (int)w, (int)h };
+            }
+        return null;
+    }
+
+    // { content start, content end } of each child box of the given type in b[from, to)
+    static IEnumerable<int[]> Children(byte[] b, int from, int to, string type)
+    {
+        int p = from;
+        while (p + 8 <= to)
+        {
+            long size = U32(b, p);
+            if (size < 8 || p + size > to) yield break;
+            if (b[p + 4] == type[0] && b[p + 5] == type[1] && b[p + 6] == type[2] && b[p + 7] == type[3])
+                yield return new[] { p + 8, (int)(p + size) };
+            p += (int)size;
+        }
+    }
+
+    static long U32(byte[] b, int i) { return (long)b[i] << 24 | (long)b[i + 1] << 16 | (long)b[i + 2] << 8 | b[i + 3]; }
+}
+
 static class WidgetThemes
 {
     delegate bool EnumProc(IntPtr h, IntPtr l);
@@ -2017,6 +2152,38 @@ static class WidgetThemes
         return stillImage;
     }
     static bool Bursting { get { return clock.ElapsedMilliseconds < Interlocked.Read(ref burstUntil); } }
+
+    // Whether the video wallpaper is playing (set by the main loop). While it isn't (paused, covered by a window,
+    // a still on battery), the screen behind the widgets only changes when something else does, so the screen isn't
+    // read again until a widget moves, a setting or line layout changes, the wallpaper changes (Kick) or 30 s pass.
+    static volatile bool wallpaperMoving = true;
+    public static void SetWallpaperMoving(bool moving)
+    {
+        if (moving == wallpaperMoving) return;
+        wallpaperMoving = moving;
+        resample = true;   // the pause may have frozen a different frame than the last sample showed
+        wake.Set();
+    }
+    static volatile bool resample;
+    const int StillResampleMs = 30000;
+    static string lastInputs;          // what the last screen sample was taken for (Inputs)
+    static long lastSampleMs = long.MinValue / 2;
+
+    // Everything apart from the screen itself that the colours depend on: the settings, each widget's place and size,
+    // its published line layout and pending moves
+    static string Inputs(Dictionary<string, RECT> widgets)
+    {
+        var sb = new StringBuilder(settingsStamp.Ticks.ToString(CultureInfo.InvariantCulture));
+        foreach (var w in widgets)
+        {
+            string lines = Path.Combine(Loopscape.State, "lines-" + w.Key.Replace('\\', '_') + ".txt");
+            sb.Append('|').Append(w.Key).Append(' ').Append(w.Value.L).Append(',').Append(w.Value.T).Append(',')
+              .Append(w.Value.R).Append(',').Append(w.Value.B).Append(' ').Append(Stamp(lines));
+        }
+        sb.Append("|moveto ").Append(Stamp(Path.Combine(Loopscape.State, "moveto.txt")));
+        return sb.ToString();
+    }
+    static long Stamp(string f) { try { return File.Exists(f) ? File.GetLastWriteTimeUtc(f).Ticks : 0; } catch { return -1; } }
 
     public static void Start()
     {
@@ -2322,9 +2489,15 @@ static class WidgetThemes
         var widgetCfgs = new List<string>();
         if (active)
         {
+            var widgets = Widgets();
+            string inputs = Inputs(widgets);
+            bool still = !wallpaperMoving && !Bursting && Loopscape.IncomingStill == null;
+            if (still && !resample && inputs == lastInputs && clock.ElapsedMilliseconds - lastSampleMs < StillResampleMs)
+                return fast ? 1000 : 3000;   // nothing behind the widgets can have changed: keep bgtheme.txt as it is
+            lastInputs = inputs; lastSampleMs = clock.ElapsedMilliseconds; resample = false;
             var moveTo = PendingMoves();
             var incoming = IncomingImage();   // also frees the last one once its crossfade is over
-            foreach (var pair in Widgets())
+            foreach (var pair in widgets)
             {
                 widgetCfgs.Add(pair.Key);
                 // a widget about to move for a new wallpaper (snap.lua beginMove) is sampled where it is going, so its
