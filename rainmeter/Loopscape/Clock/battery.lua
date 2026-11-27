@@ -1,4 +1,5 @@
--- Builds the battery line for Clock.ini, e.g. "87%  |  3h 12m left"
+-- Builds the battery line for Clock.ini, e.g. "87%  |  3h 12m left", and decides whether the line is shown.
+-- ShowBattery=auto shows it only when Windows reports a battery, so desktops don't get a "No battery" line.
 
 function Initialize()
   mAC     = SKIN:GetMeasure('MeasureACLine')
@@ -9,6 +10,24 @@ function Initialize()
   colSub  = SKIN:GetVariable('ColorSub')
   colWarn = SKIN:GetVariable('ColorWarn')
   lastCol = nil
+  shown   = nil
+end
+
+-- Shows or hides the battery line. This measure runs before the meters, so they and the layout formulas
+-- (DateBlockBottom) read the new BatteryShown in the same update. A later switch always changes the text too
+-- ('' while hidden), so MeasureBatteryText's OnChangeAction does the two-pass redraw.
+local function setShown(v)
+  if v ~= shown then
+    SKIN:Bang('!SetVariable', 'BatteryShown', v and 1 or 0)
+    shown = v
+  end
+end
+
+local function wantLine(hasBattery)
+  local mode = (SKIN:GetVariable('ShowBattery', 'auto') or 'auto'):lower()
+  if mode == '1' then return true end
+  if mode == '0' then return false end
+  return hasBattery
 end
 
 local function setColor(c)
@@ -22,8 +41,13 @@ local function setColor(c)
 end
 
 function Update()
-  -- PowerPlugin Status: 0 = no battery
-  if mStatus:GetValue() == 0 then
+  -- PowerPlugin Status: 0 = no battery (a desktop, or Windows can't read the battery)
+  local hasBattery = mStatus:GetValue() ~= 0
+  setShown(wantLine(hasBattery))
+  if not shown then
+    return ''
+  end
+  if not hasBattery then
     setColor(colSub)
     return 'No battery'
   end

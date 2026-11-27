@@ -61,7 +61,7 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and No
 
 | Widget | What it shows |
 |---|---|
-| **Clock** | The time and date, battery level and time left, the current weather and a three-day forecast. |
+| **Clock** | The time and date, the current weather and a three-day forecast. On laptops and tablets it also shows the battery level and time left; on desktops the battery line is hidden. |
 | **Network** | On Wi‑Fi, the network name and signal, band, channel, link speed and security. On Ethernet, the adapter, link speed, gateway, DNS server and MAC address. Both show the local IP address, live ping and download and upload speed. |
 | **Now Showing** | The wallpaper style on screen and when rotation will change it, with buttons to go back, pause, skip ahead or keep the current style. |
 | **Sun & Moon** | The sun's path across today's sky, the next sunrise or sunset, and the moon's phase. |
@@ -152,7 +152,7 @@ This section is for developers. You don't need any of it to use Loopscape.
 
 | Path | Contents |
 |---|---|
-| `wallpaper/` | The Loopscape launcher (`Loopscape.cs`) and the video and still renderers (`make-loop.ps1`, `styles/`). |
+| `wallpaper/` | The Loopscape launcher (`Loopscape/`, one C# file per part: `Program.cs` holds the main loop) and the video and still renderers (`make-loop.ps1`, `styles/`). |
 | `rainmeter/Loopscape/` | The Rainmeter skin: Clock, WiFi (the Network widget), NowShowing, SunMoon, Rain, System, Calendar, Settings, ViewMenu and SnapGuides, with shared code in `@Resources` (`snap.lua` handles placement and snapping). Versions before 1.1 installed it as `Skins\LaptopInfo`; the installer moves it. |
 | `rainmeter/WeatherFetch.cs`, `rainmeter/WifiInfo.cs` | Helpers the skin calls. |
 | `rainmeter/gen-settings-ini.ps1` | Generates `Settings/Settings.ini`. Edit the script, not the generated file. |
