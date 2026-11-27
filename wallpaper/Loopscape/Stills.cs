@@ -81,6 +81,6 @@ static partial class Loopscape
             if (!string.Equals(still, CurrentWindowsWallpaper(), StringComparison.OrdinalIgnoreCase)) SetWindowsWallpaper(still);
             else LastStill = still;
         }
-        StopMpv();
+        StopPlayers();
     }
 }

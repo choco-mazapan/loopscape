@@ -52,7 +52,7 @@ static partial class Loopscape
         try { if (tray != null) tray.Visible = false; } catch { }
         // Quit runs on the tray or quit-watch thread while the main loop keeps going: without the flag, the loop could
         // see mpv gone and start a new one before Exit, which would then play on with nobody to stop it
-        lock (MpvGate) { quitting = true; StopMpv(); }
+        lock (MpvGate) { quitting = true; KillPlayers(); }
         Environment.Exit(0);
     }
 
@@ -79,12 +79,12 @@ static partial class Loopscape
         using (var mutex = new Mutex(true, "Local\\LoopscapeLauncher", out created))
         {
             if (!created) return; // already running
-            SetProcessDPIAware();
+            EnableDpiAwareness();
             try { Directory.CreateDirectory(Path.Combine(Dir, "styles")); } catch { }
             try { Directory.CreateDirectory(State); } catch { }
             RemoveOldStateFiles();
             QuitStrayMpv();
-            AppDomain.CurrentDomain.ProcessExit += delegate { StopMpv(); };
+            AppDomain.CurrentDomain.ProcessExit += delegate { KillPlayers(); };
             var quitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, QuitEventName);
             var quitWatch = new Thread(delegate () { quitEvent.WaitOne(); Quit("asked by Loopscape.exe --quit"); });
             quitWatch.IsBackground = true;
@@ -103,7 +103,6 @@ static partial class Loopscape
             int fadeMs = Math.Max(0, GetInt("fadeMs", 1500));
             int interval = Math.Max(250, GetInt("pollMs", 1500));
 
-            IntPtr host = IntPtr.Zero;
             int failures = 0;
             long tick = 0;
             bool hadMpv = false;
@@ -164,44 +163,55 @@ static partial class Loopscape
 
                     if (wantVideo)
                     {
-                        bool hostGone = host == IntPtr.Zero || !IsWindow(host) || (MpvRunning && tick % 3 == 0 && HostProblem(host));
-                        if (hostGone || !MpvRunning)
+                        // Monitors were added, removed or moved: once they have settled, fit the windows to them
+                        if (DisplaysSettled()) FitSurfaces();
+                        bool broken = Players.Count == 0 || Players.Exists(p => p.Surface.Broken) ||
+                                      (tick % 3 == 0 && Players.Exists(p => p.Running && p.HostProblem()));
+                        bool allRunning = Players.Count > 0 && Players.TrueForAll(p => p.Running);
+                        if (broken || !allRunning)
                         {
-                            if (hadMpv && !MpvRunning && !hostGone && ++failures > 5)
+                            if (hadMpv && !allRunning && !broken && ++failures > 5)
                             {
                                 // don't quit for good (the wallpaper would never come back until the next sign-in): wait, then retry
                                 Log("mpv keeps exiting; retrying in 60 s");
                                 Thread.Sleep(60000); failures = 0;
                             }
-                            if (hostGone) StopMpv();
-                            host = FindWallpaperHost();
-                            if (host != IntPtr.Zero)
+                            if (broken) StopPlayers();
+                            if (Players.Count == 0) CreatePlayers();
+                            if (Players.Count > 0)
                             {
                                 bool fade = fadeMs > 0 && !covered && PrepareStatic();
-                                StartMpv(host, fade);
+                                string video = CurrentVideo();
+                                var starting = Players.FindAll(p => !p.Running);
+                                foreach (var p in starting) p.Start(video, fade);
                                 hadMpv = true;
-                                if (fade) FadeIn(fadeMs);
+                                if (fade) foreach (var p in starting) p.FadeIn(fadeMs);
                             }
                         }
                         else
                         {
                             failures = 0;
                             string want = CurrentVideo();
-                            if (!string.Equals(want, Playing, StringComparison.OrdinalIgnoreCase))
+                            bool switched = false;
+                            foreach (var p in Players)
                             {
-                                bool manual = DateTime.Now < manualUntil;
-                                // A frozen frame (on battery / covered) picked by hand: swap it instantly, no crossfade
-                                bool frozen = covered || (battery && batteryMode == "pause");
-                                SwitchTo(want, fadeMs > 0 && !covered && !(manual && frozen), manual);
-                                manualUntil = DateTime.MinValue;
+                                if (!string.Equals(want, p.Playing, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    bool manual = DateTime.Now < manualUntil;
+                                    // A frozen frame (on battery / covered) picked by hand: swap it instantly, no crossfade
+                                    bool frozen = covered || (battery && batteryMode == "pause");
+                                    p.SwitchTo(want, fadeMs > 0 && !covered && !(manual && frozen), manual);
+                                    switched = true;
+                                }
+                                else if (tick % Math.Max(1, 30000 / interval) == 0)
+                                    p.RemoveStrayFilter();
                             }
-                            else if (tick % Math.Max(1, 30000 / interval) == 0)
-                                RemoveStrayFilter();
+                            if (switched) manualUntil = DateTime.MinValue;
                         }
 
-                        SetPaused(covered || (battery && batteryMode == "pause"));
+                        foreach (var p in Players) p.SetPaused(covered || (battery && batteryMode == "pause"));
                     }
-                    else if (MpvRunning)
+                    else if (AnyPlayerRunning)
                     {
                         Log("on battery: switching to static wallpaper");
                         StopToStill();
@@ -209,7 +219,7 @@ static partial class Loopscape
                     }
                     else UpdateBatteryStill();   // hourly still rotation while on battery
                     PublishStatus(battery, batteryMode, windowCovers);
-                    WidgetThemes.SetWallpaperMoving(wantVideo && MpvRunning && !covered && !(battery && batteryMode == "pause"));
+                    WidgetThemes.SetWallpaperMoving(wantVideo && AnyPlayerRunning && !covered && !(battery && batteryMode == "pause"));
                 }
                 catch (Exception e) { Log("error: " + e.Message); }
 
