@@ -29,12 +29,14 @@ A '@Include=#@#Settings.inc'
 A 'TextFont=Space Grotesk'
 A '; Layout: content is PanelWidth-2*Pad wide; tabs and wallpaper tiles share three columns (TileW + TileGap)'
 A 'PanelWidth=460'
-A 'PanelHeight=754'
+A 'PanelHeight=820'
 A 'Pad=22'
 A 'Y0=116'
 A 'RowHeight=50'
 A '; Extra space between groups of related rows, with a thin line across the middle of it'
 A 'GroupGap=16'
+A '; Room for the small heading above each group of rows (on the tabs whose rows are in groups)'
+A 'HeadH=22'
 A '; Widgets tab: where its setting rows start (below the widget tiles)'
 A 'WRowsY=100'
 A 'LabelW=250'
@@ -212,7 +214,8 @@ foreach ($m in @(@('MeterNowHead', 'PLAYING NOW', '(#Y0#+2)', 'StyleHint', 'Font
 }
 
 # ---- setting rows: tab, row index, group, value meter number, variable, label, hint ----
-# Rows in the same group are related; each group after the first starts GroupGap lower, under a thin line.
+# Rows in the same group are related; each group after the first starts GroupGap lower, under a thin line. On the tabs
+# in $heads every group also has a heading above it, HeadH tall.
 # (variable '#skip' = a button that skips to the next wallpaper, '#update' = one that updates Loopscape, '#city' = the
 # city text box, '#profileN' = profile slot N's menu). settings.lua greys out a row while another setting makes it
 # do nothing, and swaps its hint for the reason.
@@ -251,18 +254,35 @@ $rows = @(
   @('Profiles',  1, 0, 25, '#profile2',     'Profile 2',                   'Empty'),
   @('Profiles',  2, 0, 26, '#profile3',     'Profile 3',                   'Empty')
 )
-$ruled = @{}   # tab and group that already have their line
+# Headings of the groups of rows, by tab, in group order
+$heads = @{
+  'Rotation' = @('CHOOSING STYLES', 'BATTERY AND PAUSING', 'SKIP');
+  'Widgets'  = @('CLOCK', 'WEATHER', 'PLACEMENT');
+  'Look'     = @('READABILITY', 'SIZE AND MOTION', 'UPDATES')
+}
+$started = @{}   # tab and group whose line and heading are written
 foreach ($r in $rows) {
   $tab, $k, $g, $n, $var, $label, $hint = $r
   $hid = if ($tab -ne 'Wallpaper') { 'Hidden=1' } else { $null }
-  $gy = if ($g -gt 0) { "+$g*#GroupGap#" } else { '' }
+  $headed = $heads.ContainsKey($tab)
+  $gy = $(if ($g -gt 0) { "+$g*#GroupGap#" } else { '' }) + $(if ($headed) { "+$($g + 1)*#HeadH#" } else { '' })
   $y = if ($tab -eq 'Wallpaper') { "(#Y0#+#PrevH#+16+$k*#RowHeight#$gy)" } elseif ($tab -eq 'Widgets') { "(#Y0#+#WRowsY#+$k*#RowHeight#$gy)" } else { "(#Y0#+$k*#RowHeight#$gy)" }
-  # the line above a group's first row, halfway between the last row's hint and this row's label
-  if ($g -gt 0 -and -not $ruled.ContainsKey("$tab$g")) {
-    $ruled["$tab$g"] = $true
-    A "; --- $tab : line above group $g ---"
-    A "[MeterRule$tab$g]"; A 'Meter=Shape'; A "Group=Tab$tab"; if ($hid) { A $hid }
-    A "Shape=Line #Pad#,($y-13),(#PanelWidth#-#Pad#),($y-13) | StrokeWidth 1 | Stroke Color #ColorRule#"; A ''
+  # top of the group: its heading, or its first row
+  $top = if ($headed) { "($y-#HeadH#)" } else { $y }
+  if (-not $started.ContainsKey("$tab$g")) {
+    $started["$tab$g"] = $true
+    # the line above a group, halfway between the last row's hint and the group's top
+    if ($g -gt 0) {
+      A "; --- $tab : line above group $g ---"
+      A "[MeterRule$tab$g]"; A 'Meter=Shape'; A "Group=Tab$tab"; if ($hid) { A $hid }
+      A "Shape=Line #Pad#,($top-13),(#PanelWidth#-#Pad#),($top-13) | StrokeWidth 1 | Stroke Color #ColorRule#"; A ''
+    }
+    # the group's heading, styled like the panel's other headings (PLAYING NOW, DAY STYLES)
+    if ($headed) {
+      A "; --- $tab : heading of group $g ---"
+      A "[MeterGroupHead$tab$g]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A "Group=Tab$tab"; if ($hid) { A $hid }
+      A "Text=$($heads[$tab][$g])"; A "Y=$top"; A 'FontWeight=600'; A ''
+    }
   }
   $action = if ($var -eq '#skip') { 'NextWallpaper()' } elseif ($var -eq '#update') { 'UpdateLoopscape()' } elseif ($var -eq '#city') { "EditField('city')" }
             elseif ($var -like '#profile*') { "ProfileMenu($($var.Substring(8)))" } else { "Next('$var')" }
