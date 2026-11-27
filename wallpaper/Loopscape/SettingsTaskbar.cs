@@ -6,11 +6,14 @@ using System.Threading;
 
 static partial class Loopscape
 {
-    // ---------------- Taskbar button for the Settings panel ----------------
+    // ---------------- The Settings panel as a normal window ----------------
     // The Settings panel is a Rainmeter skin, and Rainmeter makes every skin window a tool window, which Windows keeps
-    // off the taskbar and out of Alt+Tab. Rainmeter has no setting for that, so each time the panel loads it asks us for
-    // a button ("settings" in wallcmd.txt, see settings.lua Initialize). We make its window an app window, add it to the
-    // taskbar and give it our name and icon. Without Loopscape running, the panel simply has no button.
+    // off the taskbar and out of Alt+Tab. Rainmeter's window positions don't fit a panel either: the skin opens topmost
+    // ([!ZPos 1]) so it appears in front, and Rainmeter's "Normal" position ([!ZPos 0]) sends it behind every window
+    // (with the default NormalStayDesktop). So each time the panel loads it asks us ("settings" in wallcmd.txt, see
+    // settings.lua Initialize) to make it an app window with our name and icon, add it to the taskbar, and drop it from
+    // topmost to the front of the normal windows, where other windows can cover it. Without Loopscape running, the
+    // panel has no button and stays topmost.
     const string SettingsTitle = "Loopscape Settings";
     // Rainmeter titles a skin window with the path of its .ini file: ...\Skins\Loopscape\Settings\Settings.ini
     const string SettingsIniTail = @"\Loopscape\Settings\Settings.ini";
@@ -86,6 +89,7 @@ static partial class Loopscape
         const int GWL_EXSTYLE = -20;
         const int WS_EX_TOOLWINDOW = 0x80, WS_EX_APPWINDOW = 0x40000;
         const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20;
+        IntPtr HWND_NOTOPMOST = new IntPtr(-2);
         const uint WM_SETTEXT = 0x000C, WM_SETICON = 0x0080, SMTO_ABORTIFHUNG = 0x2;
         IntPtr result;
 
@@ -112,6 +116,10 @@ static partial class Loopscape
         var list = (ITaskbarList)new TaskbarList();
         try { list.HrInit(); list.AddTab(h); }
         finally { Marshal.ReleaseComObject(list); }
-        Log("settings panel: taskbar button added");
+
+        // No longer topmost, but still in front: HWND_NOTOPMOST puts the window above every normal window (and below
+        // the topmost ones), so the panel stays where it opened until another window is clicked.
+        SetWindowPosition(h, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
+        Log("settings panel: taskbar button added, no longer topmost");
     }
 }
