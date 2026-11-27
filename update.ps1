@@ -100,8 +100,8 @@ function Get-Version($ref) {
   (Invoke-Git rev-parse --short $ref).Out | Select-Object -First 1
 }
 
-# What the last check found, for the tray menu and the Settings panel (Loopscape.cs UpdateStatus, settings.lua
-# readUpdateStatus). An installed copy's update window (wallpaper\Updater.cs) writes the same file. state is uptodate or available; version is this PC's; commit is the clone's commit it describes.
+# What the last check found, for the tray menu and the Settings panel (Updates.cs UpdateStatus, settings.lua
+# readUpdateStatus). An installed copy's update window (InstallerUpdate.cs) writes the same file. state is uptodate or available; version is this PC's; commit is the clone's commit it describes.
 # sync.ps1 deletes the file when it installs another commit by hand, so a stale "up to date" isn't shown. A dry run
 # saves nothing.
 $statusFile = Join-Path $env:LOCALAPPDATA 'Loopscape\updatestatus.txt'

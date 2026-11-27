@@ -1,5 +1,5 @@
 // Update Loopscape for a copy installed with the setup program (Loopscape-Setup-<version>.exe). A git clone is updated
-// by its own update.ps1 instead (see StartUpdate in Loopscape.cs).
+// by its own update.ps1 instead (see StartUpdate in Updates.cs).
 // Runs only when asked (tray menu, Settings panel > Look); nothing checks GitHub in the background. It opens a window
 // that:
 //   1. asks the GitHub API for this project's releases and picks the newest published one tagged v<version> that has

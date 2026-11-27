@@ -306,7 +306,7 @@ begin
   if UseWindowsLocation.Checked then SetIniString('Variables', 'WeatherLocation', 'windows', SettingsInc)
   else SetIniString('Variables', 'WeatherLocation', 'city', SettingsInc);
 
-  // start with Windows. A silent run is Update Loopscape installing a new version (wallpaper\Updater.cs): the tray
+  // start with Windows. A silent run is Update Loopscape installing a new version (wallpaper\Loopscape\InstallerUpdate.cs): the tray
   // menu's Start with Windows may have changed since the first setup, so leave it as it is
   if not WizardSilent then
   begin
