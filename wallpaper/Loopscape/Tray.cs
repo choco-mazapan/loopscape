@@ -309,7 +309,13 @@ static partial class Loopscape
     {
         string rm = RainmeterExe();
         if (rm == null) { Log("tray: Rainmeter.exe not found"); return; }
-        try { Process.Start(rm, "!ActivateConfig \"Loopscape\\Settings\" \"Settings.ini\""); }
-        catch (Exception e) { Log("tray: could not open settings: " + e.Message); }
+        // Opens the panel, or brings it back if it is open but out of sight: the same bangs as OpenSettings in the
+        // widgets' Snap.inc (!ActivateConfig alone does nothing for a panel that is already open). Then make it a normal
+        // window in front, as when it loads (SettingsTaskbar.cs).
+        const string bangs = "[!ActivateConfig \"Loopscape\\Settings\" \"Settings.ini\"][!Show \"Loopscape\\Settings\"]" +
+                             "[!ZPos 1 \"Loopscape\\Settings\"]";
+        try { Process.Start(rm, bangs); }
+        catch (Exception e) { Log("tray: could not open settings: " + e.Message); return; }
+        ShowSettingsInTaskbar(500);
     }
 }

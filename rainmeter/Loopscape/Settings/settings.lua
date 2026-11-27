@@ -375,12 +375,18 @@ local function autoScale()
   return math.max(1, math.min(3, f))
 end
 
-function Initialize()
-  INC = SKIN:GetVariable('@') .. 'Settings.inc'
-  -- Rainmeter keeps skin windows off the taskbar; Loopscape gives this one a button with its name and icon
-  -- (wallpaper\Loopscape\SettingsTaskbar.cs). Asked on every load, since a refresh may undo it.
+-- Rainmeter keeps skin windows off the taskbar and has no window position for a panel that opens in front but can be
+-- covered. Loopscape does both (wallpaper\Loopscape\SettingsTaskbar.cs) when asked through wallcmd.txt: on every load,
+-- since a refresh undoes it, and by the widgets' and tray's Settings... after they bring the open panel back
+-- (OpenSettings in Snap.inc).
+function AskLoopscape()
   local f = io.open(STATE .. 'wallcmd.txt', 'a')
   if f then f:write('settings\n'); f:close() end
+end
+
+function Initialize()
+  INC = SKIN:GetVariable('@') .. 'Settings.inc'
+  AskLoopscape()
   row('WidgetScale')[3][1][2] = 'Auto (' .. math.floor(autoScale() * 100 + 0.5) .. '%)'
   for _, d in ipairs(DIMMED) do
     local m = SKIN:GetMeter('MeterHint' .. d.n)

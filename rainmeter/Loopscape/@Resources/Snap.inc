@@ -32,6 +32,11 @@ SnapSize=
 ; Which screen column the widget is in (0 left, 1 centre, 2 right), set by snap.lua: one-line views line their
 ; text up with it, so a stack reads as one block in every column
 ColumnAlign=0
+; Opens the Settings panel, or brings it back if it is already open. !ActivateConfig alone does nothing for a panel
+; that is open but out of sight (behind other windows or minimized), so the panel is also shown (which restores a
+; minimized window), put on top, and asked to tell Loopscape, which turns it back into a normal window in front
+; (settings.lua AskLoopscape, wallpaper\Loopscape\SettingsTaskbar.cs). The tray icon sends the same bangs (Tray.cs).
+OpenSettings=[!ActivateConfig "Loopscape\Settings" "Settings.ini"][!Show "Loopscape\Settings"][!ZPos 1 "Loopscape\Settings"][!CommandMeasure MeasureSettings "AskLoopscape()" "Loopscape\Settings"]
 ; Run by each widget as it closes ([Rainmeter] OnCloseAction): it tells the widgets that are running, which then
 ; check who is still there (snap.lua Closing, PeerGone)
 SnapOnClose=[!CommandMeasure MeasureSnap "Closing()"]
