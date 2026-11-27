@@ -66,6 +66,8 @@ local ROWS = {
   { 'SnapBottomMargin', 'MeterVal19', { { '76', 'Above taskbar (76 px)' }, { '28', 'Over taskbar (28 px)' },
                                         { '8', 'Screen edge (8 px)' }, { '#custom', 'Custom height...' } },
     custom = function(v) return v .. ' px' end },
+  -- read by snap.lua: keep the top snap spots (and dragged widgets) below a bar along the top of the screen
+  { 'TopBarBuffer',  'MeterVal29', { { '1', 'On' }, { '0', 'Off' } }, '0' },
   { 'WeatherUnit',   'MeterVal3', { { 'fahrenheit', '[\\x00B0]F' }, { 'celsius', '[\\x00B0]C' } } },
   { 'WeatherLocation', 'MeterVal21', { { 'city', 'City' }, { 'windows', 'Windows location' } } },
   { 'PanelAlpha',    'MeterVal4', { { '0', 'Off' }, { '110', 'Light' }, { '150', 'Medium' }, { '200', 'Dark' } } },
@@ -474,8 +476,8 @@ local function apply(var, value)
   if var == 'AnimateWeather' and on(CLOCK) then
     SKIN:Bang('!CommandMeasure', 'MeasureWeather', 'Animate()', CLOCK)
   end
-  if var == 'SnapBottomMargin' then
-    -- move widgets parked on a bottom spot (and anything stacked on them) to the new height
+  if var == 'SnapBottomMargin' or var == 'TopBarBuffer' then
+    -- move widgets parked on a bottom (or top) spot, and anything stacked on them, to the new height
     for _, w in ipairs(shownWidgets) do SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Resnap()', w) end
   end
   local SUN, RAIN = 'Loopscape\\SunMoon', 'Loopscape\\Rain'
