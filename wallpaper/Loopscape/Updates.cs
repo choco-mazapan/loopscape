@@ -20,8 +20,8 @@ static partial class Loopscape
     // update.ps1, which lists the new changes, and after you confirm pulls them and runs sync.ps1 with a progress bar.
     // sync.ps1 may restart this program midway, so update.ps1 runs in its own process.
     // A copy installed with the setup program gets the update window in InstallerUpdate.cs, which downloads, checks and
-    // runs the newest installer. Any other copy opens the Releases page to get the newest installer.
-    const string ReleasesUrl = "https://github.com/choco-mazapan/loopscape/releases";
+    // runs the newest installer. Any other copy opens the newest release, which has the installer.
+    const string ReleasesUrl = "https://github.com/choco-mazapan/loopscape/releases/latest";
     const string UpdateMutexName = "Local\\LoopscapeUpdate";   // held by update.ps1 while it runs
     static string UpdateScript()
     {
@@ -96,7 +96,7 @@ static partial class Loopscape
                     ShowInstallerUpdate(installedVer);
                     return;
                 }
-                Log(from + ": update: no sourceFolder and not installed by the setup program, opening the Releases page");
+                Log(from + ": update: no sourceFolder and not installed by the setup program, opening the newest release");
                 Process.Start(ReleasesUrl);
                 return;
             }
