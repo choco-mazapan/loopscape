@@ -18,6 +18,9 @@ A '; Opens on top of other windows. Loopscape then makes it a normal window that
 A 'OnRefreshAction=[!ZPos 1]'
 A 'ContextTitle=Close settings'
 A 'ContextAction=[!DeactivateConfig]'
+A '; The mouse wheel scrolls a tab that is taller than the panel (settings.lua Scroll)'
+A 'MouseScrollUpAction=[!CommandMeasure MeasureSettings "Scroll(-1)"]'
+A 'MouseScrollDownAction=[!CommandMeasure MeasureSettings "Scroll(1)"]'
 A ''
 A '[Metadata]'
 A 'Name=Loopscape Settings'
@@ -29,7 +32,7 @@ A '@Include=#@#Settings.inc'
 A 'TextFont=Space Grotesk'
 A '; Layout: content is PanelWidth-2*Pad wide; tabs and wallpaper tiles share three columns (TileW + TileGap)'
 A 'PanelWidth=460'
-A 'PanelHeight=820'
+A 'PanelHeight=690'
 A 'Pad=22'
 A 'Y0=116'
 A 'RowHeight=50'
@@ -37,6 +40,14 @@ A '; Extra space between groups of related rows, with a thin line across the mid
 A 'GroupGap=16'
 A '; Room for the small heading above each group of rows (on the tabs whose rows are in groups)'
 A 'HeadH=22'
+A '; Scrolling: under the tab bar, a tab taller than the panel scrolls between ViewTop and ViewBottom. settings.lua sets'
+A '; ScrollY (how far it is scrolled) and the scroll bar (ScrollOn, ScrollThumbY, ScrollThumbH)'
+A 'ViewTop=(#Pad#+81)'
+A 'ViewBottom=(#PanelHeight#-14)'
+A 'ScrollY=0'
+A 'ScrollOn=0'
+A 'ScrollThumbY=0'
+A 'ScrollThumbH=0'
 A '; Widgets tab: where its setting rows start (below the widget tiles)'
 A 'WRowsY=100'
 A 'LabelW=250'
@@ -196,6 +207,15 @@ A '[MeterDivider]'
 A 'Meter=Shape'
 A 'Shape=Line #Pad#,(#Pad#+80),(#PanelWidth#-#Pad#),(#Pad#+80) | StrokeWidth 1 | Stroke Color 255,255,255,40'
 A ''
+A '; ----- scrolling area: the setting rows, the widget tiles and the Profiles note are drawn in this container, which'
+A '; clips them to ViewTop..ViewBottom. To scroll, it moves up by ScrollY and its shape moves down by as much, so its'
+A '; meters move while the visible window stays put. Its meters'' X and Y are relative to it (at 0,0 when not scrolled). -----'
+A '[MeterScrollView]'; A 'Meter=Shape'; A 'X=0'; A 'Y=(-#ScrollY#)'
+A 'Shape=Rectangle 0,(#ViewTop#+#ScrollY#),#PanelWidth#,(#ViewBottom#-#ViewTop#) | Fill Color 255,255,255,255 | StrokeWidth 0'
+A 'DynamicVariables=1'; A ''
+A '; An empty meter at the container''s origin: settings.lua compares it with the contained meters to find where they are'
+A '; on screen, for the dropdowns and the text box'
+A '[MeterScrollProbe]'; A 'Meter=String'; A 'Container=MeterScrollView'; A 'X=0'; A 'Y=0'; A ''
 
 # ---- Wallpaper tab: "Playing now" preview (settings.lua fills it from %LOCALAPPDATA%\Loopscape\wallstatus.txt; hovering a tile
 #      previews that style instead) ----
@@ -274,24 +294,24 @@ foreach ($r in $rows) {
     # the line above a group, halfway between the last row's hint and the group's top
     if ($g -gt 0) {
       A "; --- $tab : line above group $g ---"
-      A "[MeterRule$tab$g]"; A 'Meter=Shape'; A "Group=Tab$tab"; if ($hid) { A $hid }
+      A "[MeterRule$tab$g]"; A 'Meter=Shape'; A "Group=Tab$tab"; A 'Container=MeterScrollView'; if ($hid) { A $hid }
       A "Shape=Line #Pad#,($top-13),(#PanelWidth#-#Pad#),($top-13) | StrokeWidth 1 | Stroke Color #ColorRule#"; A ''
     }
     # the group's heading, styled like the panel's other headings (PLAYING NOW, DAY STYLES)
     if ($headed) {
       A "; --- $tab : heading of group $g ---"
-      A "[MeterGroupHead$tab$g]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A "Group=Tab$tab"; if ($hid) { A $hid }
+      A "[MeterGroupHead$tab$g]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A "Group=Tab$tab"; A 'Container=MeterScrollView'; if ($hid) { A $hid }
       A "Text=$($heads[$tab][$g])"; A "Y=$top"; A 'FontWeight=600'; A ''
     }
   }
   $action = if ($var -eq '#skip') { 'NextWallpaper()' } elseif ($var -eq '#update') { 'UpdateLoopscape()' } elseif ($var -eq '#city') { "EditField('city')" }
             elseif ($var -like '#profile*') { "ProfileMenu($($var.Substring(8)))" } else { "Next('$var')" }
   A "; --- $tab : $var ---"
-  A "[MeterLabel$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleLabel'; A "Group=Tab$tab"; if ($hid) { A $hid }
+  A "[MeterLabel$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleLabel'; A "Group=Tab$tab"; A 'Container=MeterScrollView'; if ($hid) { A $hid }
   A "Text=$label"; A "Y=$y"; A ''
-  A "[MeterHint$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A "Group=Tab$tab"; if ($hid) { A $hid }
+  A "[MeterHint$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A "Group=Tab$tab"; A 'Container=MeterScrollView'; if ($hid) { A $hid }
   A "Text=$hint"; A "Y=($y+19)"; A ''
-  A "[MeterVal$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleValue'; A "Group=Tab$tab"; if ($hid) { A $hid }
+  A "[MeterVal$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleValue'; A "Group=Tab$tab"; A 'Container=MeterScrollView'; if ($hid) { A $hid }
   A $(if ($var -eq '#skip') { 'Text=Skip  [\x203A]' } elseif ($var -eq '#update') { 'Text=Update  [\x203A]' } else { 'Text=...' }); A "Y=($y+4)"
   A "MouseOverAction=[!SetOption MeterVal$n SolidColor #ColorPillHover#][!UpdateMeter MeterVal$n][!Redraw]"
   A "MouseLeaveAction=[!SetOption MeterVal$n SolidColor #ColorPill#][!UpdateMeter MeterVal$n][!Redraw]"
@@ -299,7 +319,7 @@ foreach ($r in $rows) {
   A ''
 }
 A '; ----- Profiles tab: what a profile keeps -----'
-A '[MeterProfilesNote]'; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A 'Group=TabProfiles'; A 'Hidden=1'
+A '[MeterProfilesNote]'; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A 'Group=TabProfiles'; A 'Container=MeterScrollView'; A 'Hidden=1'
 A 'Text=A profile keeps every setting in this panel and each widget''s view. Loading one applies it to the widgets and the wallpaper.'
 A 'Y=(#Y0#+3*#RowHeight#+8)'; A 'W=(#PanelWidth#-2*#Pad#)'; A 'ClipString=2'; A ''
 $G = '(#Y0#+#PrevH#+16)'   # top of the Wallpaper tab's controls below the preview
@@ -339,14 +359,14 @@ for ($i = 0; $i -lt $night.Count; $i++) {
 
 # ---- Widgets tab: one tile per widget, lit when it's on screen (settings.lua: WIDGET_TILES, ToggleWidget) ----
 A '; ----- widget tiles: click to show / hide a widget -----'
-A '[MeterWidgetsHead]'; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A 'Group=TabWidgets'; A 'Hidden=1'
+A '[MeterWidgetsHead]'; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A 'Group=TabWidgets'; A 'Container=MeterScrollView'; A 'Hidden=1'
 A 'Text=WIDGETS ON SCREEN'; A 'Y=(#Y0#-4)'; A 'FontWeight=600'; A ''
-A '[MeterWidgetsHint]'; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A 'Group=TabWidgets'; A 'Hidden=1'
+A '[MeterWidgetsHint]'; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; A 'Group=TabWidgets'; A 'Container=MeterScrollView'; A 'Hidden=1'
 A 'Text=Click to show or hide'; A 'X=(#PanelWidth#-#Pad#)'; A 'W=260'; A 'StringAlign=Right'; A 'Y=(#Y0#-4)'; A ''
 $widgets = 'Clock', 'Network', 'Now Showing', 'Sun & Moon', 'Rain', 'System', 'Calendar'
 for ($i = 0; $i -lt $widgets.Count; $i++) {
   $n = $i + 1; $c = $i % 4; $rw = [math]::Floor($i / 4)
-  A "[MeterWTile$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleTile'; A 'Group=TabWidgets'; A 'Hidden=1'
+  A "[MeterWTile$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleTile'; A 'Group=TabWidgets'; A 'Container=MeterScrollView'; A 'Hidden=1'
   A "Text=$($widgets[$i])"; A 'W=#WTileW#'; A "X=(#Pad#+#WTileW#/2+$c*(#WTileW#+#TileGap#))"; A "Y=(#Y0#+18+#TileH#/2+$rw*(#TileH#+8))"
   A "SolidColor=[#WTileBase$n]"; A "FontColor=[#WTileFont$n]"
   A "MouseOverAction=[!SetOption MeterWTile$n SolidColor #ColorTileHover#][!UpdateMeter MeterWTile$n][!Redraw]"
@@ -354,6 +374,16 @@ for ($i = 0; $i -lt $widgets.Count; $i++) {
   A "LeftMouseUpAction=[!CommandMeasure MeasureSettings `"ToggleWidget($n)`"]"
   A ''
 }
+
+# ---- scroll bar ----
+A '; ----- scroll bar: shown while the tab is taller than the panel. Click the track to jump there; the wheel scrolls too -----'
+A '[MeterScrollTrack]'; A 'Meter=Shape'; A 'Hidden=(1-#ScrollOn#)'; A 'X=(#PanelWidth#-12)'; A 'Y=#ViewTop#'
+A 'Shape=Rectangle 0,0,8,(#ViewBottom#-#ViewTop#),4 | Fill Color 255,255,255,14 | StrokeWidth 0'
+A 'DynamicVariables=1'; A 'LeftMouseUpAction=[!CommandMeasure MeasureSettings "ScrollTo($MouseY$)"]'; A ''
+A '; (no mouse action: a click on the thumb reaches the track under it)'
+A '[MeterScrollThumb]'; A 'Meter=Shape'; A 'Hidden=(1-#ScrollOn#)'; A 'X=(#PanelWidth#-11)'; A 'Y=#ScrollThumbY#'
+A 'Shape=Rectangle 0,0,6,#ScrollThumbH#,3 | Fill Color 255,255,255,90 | StrokeWidth 0'
+A 'DynamicVariables=1'; A ''
 
 # ---- dropdown ----
 A '; ----- dropdown list, drawn on top of everything (settings.lua opens/closes it) -----'
