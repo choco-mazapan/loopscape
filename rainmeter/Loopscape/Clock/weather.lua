@@ -6,6 +6,9 @@ function Initialize()
   iconDir = SKIN:GetVariable('@') .. 'Weather\\'
 end
 
+-- Files Loopscape.exe shares while it runs (wallstatus.txt says when a window covers the desktop)
+local STATE = (os.getenv('LOCALAPPDATA') or ((os.getenv('USERPROFILE') or '') .. '\\AppData\\Local')) .. '\\Loopscape\\'
+
 -- Changing a tooltip at runtime can leave old tooltip windows stuck on screen, so only touch ones whose text changed
 local tips = {}
 local function setTip(meter, text)
@@ -55,6 +58,66 @@ local function setIcon(meter, path)
   for i = 1, 9 do SKIN:Bang('!SetOption', 'Halo_' .. meter .. '_' .. i, 'ImageName', path) end
 end
 
+-- ---------- animated weather icon (Settings > Animate weather icons) ----------
+-- Only the large icon animates. Weather\<shade>\anim\<icon>.png holds FRAMES frames side by side; MeasureWxAnim calls
+-- Frame() every WxFrameMs, which moves the crop (#WxCrop#) along the strip and redraws. Each frame costs one redraw
+-- of the clock, so the frames are few and slow, and Frame() skips the redraw when nobody can see the icon.
+local FRAMES = 6
+local mainIcon = nil   -- the large icon's name (e.g. 'rain'), once the weather is in
+local animOn = false
+local frame = 0
+local covered, coveredCheck = false, 0
+
+local function animating() return SKIN:GetVariable('AnimateWeather', '0') == '1' end
+
+-- Shows the large icon still or animated, to match AnimateWeather
+local function showMainIcon()
+  if not mainIcon then return end
+  local cell = tonumber(SKIN:GetVariable('WxStripCell', '48')) or 48
+  if animOn then
+    setIcon('MeterWeatherIcon', iconPath('MeterWeatherIcon', 'anim\\', mainIcon))
+    SKIN:Bang('!SetVariable', 'WxCrop', (frame * cell) .. ',0,' .. cell .. ',' .. cell)
+  else
+    setIcon('MeterWeatherIcon', iconPath('MeterWeatherIcon', '', mainIcon))
+    SKIN:Bang('!SetVariable', 'WxCrop', '')
+  end
+end
+
+-- Starts or stops the animation after AnimateWeather changed (Settings) or the widget loaded (OnRefreshAction)
+function Animate()
+  local on = animating()
+  if on ~= animOn then
+    animOn = on
+    frame = 0
+    SKIN:Bang('!CommandMeasure', 'MeasureWxAnim', on and 'Execute 1' or 'Stop 1')
+    if not on then SKIN:Bang('!CommandMeasure', 'MeasureWxAnim', 'Stop 2') end
+  end
+  showMainIcon()
+  SKIN:Bang('!UpdateMeterGroup', 'WxAnim')
+  SKIN:Bang('!Redraw')
+end
+
+-- One animation step. Skipped (no redraw) while the icon is hidden (Compact and Time only views) or while a window
+-- covers the desktop, which Loopscape notes in wallstatus.txt (checked every few seconds).
+function Frame()
+  if not animOn or not mainIcon then return end
+  if tonumber(SKIN:GetVariable('View', '0')) >= 2 then return end
+  coveredCheck = coveredCheck - 1
+  if coveredCheck <= 0 then
+    coveredCheck = 10
+    local f = io.open(STATE .. 'wallstatus.txt', 'r')
+    local text = f and f:read('*a') or ''
+    if f then f:close() end
+    covered = text:find('window covers the desktop', 1, true) ~= nil
+  end
+  if covered then return end
+  frame = (frame + 1) % FRAMES
+  local cell = tonumber(SKIN:GetVariable('WxStripCell', '48')) or 48
+  SKIN:Bang('!SetVariable', 'WxCrop', (frame * cell) .. ',0,' .. cell .. ',' .. cell)
+  SKIN:Bang('!UpdateMeterGroup', 'WxAnim')
+  SKIN:Bang('!Redraw')
+end
+
 function Update()
   local out = mRun:GetStringValue() or ''
   local t = {}
@@ -85,7 +148,8 @@ function Update()
 
   SKIN:Bang('!SetOption', 'MeasureWeatherTemp', 'String', tostring(temp))
   SKIN:Bang('!UpdateMeasure', 'MeasureWeatherTemp')
-  setIcon('MeterWeatherIcon', iconPath('MeterWeatherIcon', '', sunVariant(icon, temp)))
+  mainIcon = sunVariant(icon, temp)
+  showMainIcon()
   SKIN:Bang('!SetOption', 'MeterWeatherDesc', 'Text', desc)
   SKIN:Bang('!SetOption', 'MeterWeatherCity', 'Text', t.city or '')
   -- (no "updated" time in the tooltip: it would change the tooltip on every fetch)

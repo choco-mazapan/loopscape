@@ -39,6 +39,8 @@ TextEffect=Shadow
 TextBoost=5
 ; Rounded pills behind each text line when the panel tint is off (1 = on)
 TextPills=1
+; Animate the clock's weather icon: falling rain and snow, twinkling stars, flashing lightning (1 = on)
+AnimateWeather=0
 ; Adaptive text colour when the panel is off: smooth (white or dark text to suit the wallpaper, checked every second,
 ; fades between them) or off. The Settings panel offers only these two; Loopscape also still reads the older modes
 ; contrast, tinted, smoothtinted and perline, and the panel shows them as On

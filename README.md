@@ -2,6 +2,8 @@
 
 Loopscape is a live wallpaper for Windows 10 and 11. It plays looping animated landscapes (shores, pixel clouds, auroras, nebulas and more) behind your desktop icons and switches to dark styles at night. It comes with a set of desktop widgets, drawn by [Rainmeter](https://www.rainmeter.net/), that show the time, weather, battery, network and more, and also move to a quiet spot on each wallpaper.
 
+Inspired by [this post](https://x.com/morrre_dsgn/status/2123935510276288717).
+
 ![The Riso waves style with the System, Wi‑Fi and Clock widgets](screenshots/desktop.jpg)
 
 - [Install](#install)
@@ -61,7 +63,7 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and No
 
 | Widget | What it shows |
 |---|---|
-| **Clock** | The time and date, the current weather and a three-day forecast. On laptops and tablets it also shows the battery level and time left; on desktops the battery line is hidden. |
+| **Clock** | The time and date, the current weather and a three-day forecast. On laptops and tablets it also shows the battery level and time left; on desktops the battery line is hidden. Settings → Look → *Animate weather icon* makes the current weather icon move: rain and snow fall, stars twinkle and lightning flashes. It is off by default and pauses while a window covers the desktop. |
 | **Network** | On Wi‑Fi, the network name and signal, band, channel, link speed and security. On Ethernet, the adapter, link speed, gateway, DNS server and MAC address. Both show the local IP address, live ping and download and upload speed. |
 | **Now Showing** | The wallpaper style on screen and when rotation will change it, with buttons to go back, pause, skip ahead or keep the current style. |
 | **Sun & Moon** | The sun's path across today's sky, the next sunrise or sunset, and the moon's phase. |

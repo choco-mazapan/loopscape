@@ -237,7 +237,8 @@ $rows = @(
   @('Look',      3, 18, 'TextBoost',     'Text boost',                  'Readable text with no backdrop'),
   @('Look',      4, 8,  'TextEffect',    'Text effect',                 'Used while Text boost is off'),
   @('Look',      5, 27, 'WidgetScale',   'Widget size',                 'Auto makes them bigger on large screens'),
-  @('Look',      6, 23, '#update',       'Update Loopscape',            'Get the latest version from GitHub'),
+  @('Look',      6, 28, 'AnimateWeather', 'Animate weather icon',      'Rain falls, stars twinkle'),
+  @('Look',      7, 23, '#update',       'Update Loopscape',            'Get the latest version from GitHub'),
   # labels and hints are filled in by settings.lua from the profile files
   @('Profiles',  0, 24, '#profile1',     'Profile 1',                   'Empty'),
   @('Profiles',  1, 25, '#profile2',     'Profile 2',                   'Empty'),
