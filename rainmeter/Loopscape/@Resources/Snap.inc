@@ -7,6 +7,9 @@
 ; On/off (SnapEnabled), the snap distance and the grid live in Settings.inc. SnapAttach and SnapPlace are written
 ; into a widget's own [Variables] automatically.
 [Variables]
+; Widget size: 0 = automatic. Default only, for a Settings.inc from before the setting (Settings.inc, included after
+; this file, sets it). Scale.inc turns it into #Scale#
+WidgetScale=0
 SnapMargin=28
 ; Gap under the bottom spots. Default only: the Settings panel ("Bottom snap spots") sets it in Settings.inc
 SnapBottomMargin=76

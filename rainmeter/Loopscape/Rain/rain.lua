@@ -10,8 +10,16 @@ local WET = 0.05               -- mm in 15 minutes that counts as rain (Open-Met
 local LIGHT, MODERATE = 0.6, 2 -- below 2.5 mm/h is light, below 8 mm/h moderate, then heavy
 local STEPS = 12
 
+-- Widget size (Settings > Widgets > Widget size): sizes in the skin are formulas such as (220*#Scale#), so read them
+-- with ParseFormula; distances written here are pixels at 100% and are multiplied by scale
+local scale = 1
+local function size(name, default)
+  return tonumber(SKIN:ParseFormula(SKIN:GetVariable(name, tostring(default)))) or default
+end
+
 function Initialize()
   mRun = SKIN:GetMeasure('MeasureRainRun')
+  scale = size('Scale', 1)
 end
 
 local function setOption(meter, option, value)
@@ -52,11 +60,11 @@ local function level(mm)
 end
 
 local function bars(vals)
-  local ch = tonumber(SKIN:GetVariable('ChartH', '36')) or 36
+  local ch = size('ChartH', 36)
   for i = 1, STEPS do
     local v, h = vals[i], 0
     -- square root scale: light rain is still easy to see, heavy rain fills the chart
-    if v and v >= WET then h = math.max(5, math.floor(ch * math.min(1, math.sqrt(v / 2.5)) + 0.5)) end
+    if v and v >= WET then h = math.max(math.floor(5 * scale + 0.5), math.floor(ch * math.min(1, math.sqrt(v / 2.5)) + 0.5)) end
     local k = '$RH' .. i
     if shown[k] ~= h then shown[k] = h; SKIN:Bang('!SetVariable', 'RH' .. i, h); dirty = true end
   end

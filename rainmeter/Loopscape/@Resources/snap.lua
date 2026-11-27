@@ -91,6 +91,15 @@ end
 local function num(name, default)
   return tonumber(SKIN:GetVariable(name, tostring(default))) or default
 end
+-- Widget size (Settings > Widgets > Widget size): #Scale# from Scale.inc, a formula such as (0>0 ? ... : ...). It only
+-- changes on a refresh, so it is read once.
+local scaleValue
+local function scale()
+  if not scaleValue then scaleValue = tonumber(SKIN:ParseFormula(SKIN:GetVariable('Scale', '1'))) or 1 end
+  return scaleValue
+end
+-- A distance in Snap.inc (margins, gaps), in pixels at the current widget size
+local function px(name, default) return math.floor(num(name, default) * scale() + 0.5) end
 local function key(config) return (config:gsub('[^%w]', '_')) end
 local function quoted(s) return '"' .. (s:gsub('\\', '\\\\')) .. '"' end
 
@@ -217,7 +226,7 @@ end
 -- Space between stacked widgets. With the panel tint off their padding is invisible, so they overlap a little on
 -- purpose (SnapGapClear is negative) to bring the text lines together.
 local function gap()
-  return (num('PanelAlpha', 0) == 0) and num('SnapGapClear', -16) or num('SnapGap', 12)
+  return (num('PanelAlpha', 0) == 0) and px('SnapGapClear', -16) or px('SnapGap', 12)
 end
 
 -- Whether rect a (x, y, w, h) covers rect r. Overlap up to the stacking overlap above (plus a few pixels) doesn't
@@ -325,14 +334,14 @@ end
 -- by its own members' rules.
 local function snapLimits()
   local _, sy, _, sh = screen()
-  return sy + math.floor(num('SnapMargin', 28) / 2), sy + sh - num('SnapBottomMargin', 76)
+  return sy + math.floor(px('SnapMargin', 28) / 2), sy + sh - num('SnapBottomMargin', 76)
 end
 
 -- Our position when the group's box sits on screen spot name (tl tc tr / ml mr / bl bc br)
 local SPOTS = { 'tl', 'tc', 'tr', 'ml', 'mr', 'bl', 'bc', 'br' }
 local function spotPos(name, box)
   local sx, sy, sw, sh = screen()
-  local m, mb = num('SnapMargin', 28), num('SnapBottomMargin', 76)
+  local m, mb = px('SnapMargin', 28), num('SnapBottomMargin', 76)
   local bw, bh = box[3] - box[1], box[4] - box[2]
   local col, row = name:sub(2, 2), name:sub(1, 1)
   local bx = (col == 'l') and sx + m or ((col == 'r') and sx + sw - bw - m or sx + math.floor((sw - bw) / 2))
@@ -381,7 +390,7 @@ local function chooseTarget(x, y, w, h)
   local fx, fy = x, y
   if num('SnapGrid', 1) == 1 then
     -- the grid starts at the screen margin, so it lines up with the corner spots
-    local g, m = math.max(4, num('SnapGridSize', 24)), num('SnapMargin', 28)
+    local g, m = math.max(4, num('SnapGridSize', 24)), px('SnapMargin', 28)
     fx = sx + m + math.floor((x - sx - m) / g + 0.5) * g
     fy = sy + m + math.floor((y - sy - m) / g + 0.5) * g
   end
@@ -1419,14 +1428,18 @@ local function applyColours(set)
         SKIN:Bang('!SetOption', h, 'ColorMatrix5', rgb)
       end
     end
-    if drop then SKIN:Bang('!SetVariable', 'WxDropX', drop[1]); SKIN:Bang('!SetVariable', 'WxDropY', drop[2]) end
+    -- (the halo offsets are pixels at 100%: they grow with the widget size, like the icons do)
+    if drop then
+      SKIN:Bang('!SetVariable', 'WxDropX', drop[1] * scale()); SKIN:Bang('!SetVariable', 'WxDropY', drop[2] * scale())
+    end
   end
   local function textEffects(m, e, role)
     SKIN:Bang('!SetOption', m, 'StringEffect', B.effect or SKIN:GetVariable('TextEffect', 'Shadow'))
     local inl = {}
     if B.halo then
       local h = B.halo
-      inl[#inl + 1] = 'Shadow | ' .. h[1] .. ' | ' .. h[2] .. ' | ' .. h[3] .. ' | ' .. col(e.shadow, h[4])
+      local k = scale()
+      inl[#inl + 1] = 'Shadow | ' .. h[1] * k .. ' | ' .. h[2] * k .. ' | ' .. h[3] * k .. ' | ' .. col(e.shadow, h[4])
     end
     -- per-line mode: the text itself shades from one end to the other, following the wallpaper beneath it
     if e.tend and role ~= 'battery' then
@@ -1630,7 +1643,8 @@ function ViewMenu(mx, my)
   SKIN:Bang('!SetVariable', 'Names', table.concat(names, '|'), VIEW_MENU)
   SKIN:Bang('!SetVariable', 'Current', SKIN:GetVariable('View', '0'), VIEW_MENU)
   -- open with the cursor just inside the menu's top-left corner, so moving away closes it
-  SKIN:Bang('!Move', SKIN:GetX() + (tonumber(mx) or 0) - 14, SKIN:GetY() + (tonumber(my) or 0) - 14, VIEW_MENU)
+  local inset = math.floor(14 * scale() + 0.5)
+  SKIN:Bang('!Move', SKIN:GetX() + (tonumber(mx) or 0) - inset, SKIN:GetY() + (tonumber(my) or 0) - inset, VIEW_MENU)
   SKIN:Bang('!CommandMeasure', 'MeasureMenu', 'Build()', VIEW_MENU)
 end
 
