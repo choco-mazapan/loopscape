@@ -310,6 +310,7 @@ function ShowTab(name)
   SKIN:Bang('!WriteKeyValue', 'Variables', 'Tab', name)   -- reopen on the same tab next time
   SKIN:Bang('!UpdateMeter', '*')
   SKIN:Bang('!Redraw')
+  ResetScroll()   -- a new tab starts at its top (and shows the scroll bar if it is taller than the panel)
 end
 
 -- ---------- Update Loopscape row (Look tab): what update.ps1 last found, from %LOCALAPPDATA%\Loopscape\updatestatus.txt ----------
@@ -603,7 +604,7 @@ function EditField(name)
   SKIN:Bang('!SetVariable', 'TextDefault', f.start())
   SKIN:Bang('!SetOption', 'MeasureTextInput', 'InputNumber', f.number and '1' or '0')
   SKIN:Bang('!SetOption', 'MeasureTextInput', 'X', right - w + PAD_X)
-  SKIN:Bang('!SetOption', 'MeasureTextInput', 'Y', m:GetY() + PAD_Y)
+  SKIN:Bang('!SetOption', 'MeasureTextInput', 'Y', ScreenY(m) + PAD_Y)
   SKIN:Bang('!SetOption', 'MeasureTextInput', 'W', w - 2 * PAD_X)
   SKIN:Bang('!SetOption', 'MeasureTextInput', 'H', h - 2 * PAD_Y)
   SKIN:Bang('!UpdateMeasure', 'MeasureTextInput')
@@ -661,14 +662,26 @@ EndEditCity = EndEdit
 local function openList(key, meterName, items, sel, pick)
   local value = SKIN:GetMeter(meterName)
   local n = math.min(#items, DD_MAX)
-  local w = 210
+  -- As wide as the longest item: each item is 10 px of padding either side of its text, inside 4 px of list. At least
+  -- 210 px, and never wider than the panel's content. The list lines up with the right edge of its button.
+  local panelW, pad = tonumber(SKIN:GetVariable('PanelWidth')) or 460, tonumber(SKIN:GetVariable('Pad')) or 22
+  local textW, probe = 0, SKIN:GetMeter('DDMeasure')
+  if probe then
+    for i = 1, n do
+      SKIN:Bang('!SetOption', 'DDMeasure', 'Text', items[i])
+      SKIN:Bang('!UpdateMeter', 'DDMeasure')
+      textW = math.max(textW, probe:GetW())
+    end
+  end
+  local w = math.min(panelW - 2 * pad, math.max(210, math.ceil(textW) + 2 * 10 + 2 * 4))
   local itemH = tonumber(SKIN:GetVariable('DDItemH')) or 28
   local h = n * itemH + 8
-  local x = (tonumber(SKIN:GetVariable('PanelWidth')) or 460) - (tonumber(SKIN:GetVariable('Pad')) or 22) - w
-  local y = value:GetY() + value:GetH() + 4
+  local x = panelW - pad - w
+  local top = ScreenY(value)   -- (the button may be scrolled)
+  local y = top + value:GetH() + 4
   -- open upwards when the list would run past the bottom of the panel
   local panelH = tonumber(SKIN:GetVariable('PanelHeight')) or SKIN:GetMeter('MeterPanel'):GetH()
-  if y + h > panelH and value:GetY() - h - 4 >= 4 then y = value:GetY() - h - 4 end
+  if y + h > panelH and top - h - 4 >= 4 then y = top - h - 4 end
   SKIN:Bang('!SetVariable', 'DDX', x); SKIN:Bang('!SetVariable', 'DDY', y)
   SKIN:Bang('!SetVariable', 'DDWidth', w)
   SKIN:Bang('!SetVariable', 'DDBackW', w)
@@ -897,4 +910,80 @@ for i = 1, PROFILES do
         show()
       end
     end }
+end
+
+-- ---------- scrolling: a tab taller than the panel ----------
+-- The rows, the widget tiles and the Profiles note are in the container MeterScrollView, which moves up by ScrollY while
+-- its clipping window stays under the tab bar (see Settings.ini). The wheel scrolls by a row; a click on the scroll
+-- bar's track jumps there. Each tab starts at its top (ShowTab).
+local scrollY, scrollMax = 0, 0
+
+local function formula(name) return tonumber(SKIN:ParseFormula(SKIN:GetVariable(name, '0'))) or 0 end
+
+-- Where a meter in the container is on screen. Whether Rainmeter reports a contained meter's Y relative to the container
+-- or to the skin, it reports the probe at the container's origin the same way, so the difference holds either way.
+function ScreenY(m)
+  local probe = SKIN:GetMeter('MeterScrollProbe')
+  if not probe then return m:GetY() end
+  return m:GetY() - probe:GetY() - scrollY
+end
+
+-- Bottom of a tab's content when it is not scrolled: its lowest hint line, or the Profiles note
+local function contentBottom(tab)
+  local bottom = 0
+  local function take(name)
+    local m = SKIN:GetMeter(name)
+    if m and m:GetOption('Group') == 'Tab' .. tab then bottom = math.max(bottom, ScreenY(m) + scrollY + m:GetH()) end
+  end
+  for n = 1, 40 do take('MeterHint' .. n) end
+  take('MeterProfilesNote')
+  return bottom
+end
+
+-- Keeps scrollY within the current tab, moves the container and sizes the scroll bar's thumb to the share in view
+local function applyScroll()
+  local top, bottom = formula('ViewTop'), formula('ViewBottom')
+  scrollMax = math.max(0, math.ceil(contentBottom(SKIN:GetVariable('Tab', 'Wallpaper')) + 12 - bottom))
+  scrollY = math.max(0, math.min(math.floor(scrollY + 0.5), scrollMax))
+  local viewH = bottom - top
+  local thumbH, thumbY = 0, top
+  if scrollMax > 0 then
+    thumbH = math.max(24, math.floor(viewH * viewH / (viewH + scrollMax)))
+    thumbY = top + math.floor((viewH - thumbH) * scrollY / scrollMax + 0.5)
+  end
+  SKIN:Bang('!SetVariable', 'ScrollY', scrollY)
+  SKIN:Bang('!SetVariable', 'ScrollOn', scrollMax > 0 and 1 or 0)
+  SKIN:Bang('!SetVariable', 'ScrollThumbH', thumbH)
+  SKIN:Bang('!SetVariable', 'ScrollThumbY', thumbY)
+  SKIN:Bang('!UpdateMeter', '*')
+  SKIN:Bang('!Redraw')
+end
+
+-- An open list or text box stays where it opened, so it closes before the rows move
+local function beforeScroll()
+  if ddKey then CloseDropdown() end
+  if editing then EndEdit() end
+end
+
+-- Mouse wheel: -1 up, 1 down, a row at a time
+function Scroll(dir)
+  if scrollMax <= 0 then return end
+  beforeScroll()
+  scrollY = scrollY + (tonumber(dir) or 0) * formula('RowHeight')
+  applyScroll()
+end
+
+-- A click on the scroll bar's track, y pixels from its top: centre the thumb there
+function ScrollTo(y)
+  if scrollMax <= 0 then return end
+  beforeScroll()
+  local thumbH = formula('ScrollThumbH')
+  local span = math.max(1, formula('ViewBottom') - formula('ViewTop') - thumbH)
+  scrollY = math.max(0, math.min(1, ((tonumber(y) or 0) - thumbH / 2) / span)) * scrollMax
+  applyScroll()
+end
+
+function ResetScroll()
+  scrollY = 0
+  applyScroll()
 end
