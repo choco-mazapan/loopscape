@@ -4,7 +4,7 @@
 #   - copies the Rainmeter skin to Documents\Rainmeter\Skins\Loopscape, keeping what lives only there:
 #       Settings.inc values (new keys are added), widget layout (SnapAttach, SnapSize, View), the panel's last tab (Tab),
 #       and the bundled fonts (Rainmeter locks them; copied only if missing)
-#   - rebuilds and restarts Loopscape if Loopscape.cs changed (or with -RebuildLoopscape); new Loopscape.ini keys are added
+#   - rebuilds and restarts Loopscape if its source (wallpaper\Loopscape\) changed (or with -RebuildLoopscape); new Loopscape.ini keys are added
 #   - refreshes the widgets
 #   - saves this folder as sourceFolder= in Loopscape.ini, so the tray's Update Loopscape can update from it (update.ps1)
 #   .\sync.ps1            .\sync.ps1 -DryRun            .\sync.ps1 -RebuildLoopscape
@@ -54,7 +54,12 @@ if (-not $DryRun) { & (Join-Path $root 'rainmeter\gen-settings-ini.ps1') | Out-N
 # than the copy in use. WeatherFetch / WifiInfo go into the skin's @Resources, Loopscape into %USERPROFILE%\Loopscape.
 $icon  = Join-Path $root 'rainmeter\Loopscape.ico'
 $built = Join-Path $root 'build\out'
-function Test-Stale($exe, $src) { -not (Test-Path $exe) -or (Get-Item $src).LastWriteTime -gt (Get-Item $exe).LastWriteTime -or (Get-Item $icon).LastWriteTime -gt (Get-Item $exe).LastWriteTime }
+# True when $exe is missing or older than any of its sources ($src may be a wildcard) or the icon
+function Test-Stale($exe, $src) {
+  if (-not (Test-Path $exe)) { return $true }
+  $built = (Get-Item $exe).LastWriteTime
+  [bool](@(Get-Item $src) + (Get-Item $icon) | Where-Object { $_.LastWriteTime -gt $built })
+}
 $wfExe = Join-Path $skinSrc '@Resources\WeatherFetch.exe'; $wiExe = Join-Path $skinSrc '@Resources\WifiInfo.exe'
 $lwExe = Join-Path $lwDir 'Loopscape.exe'
 # installed with the setup program: update that copy
@@ -62,7 +67,7 @@ $installedLw = Join-Path $env:LOCALAPPDATA 'Programs\Loopscape\Loopscape.exe'
 if (Test-Path $installedLw) { $lwExe = $installedLw }
 $staleWf = Test-Stale $wfExe (Join-Path $root 'rainmeter\WeatherFetch.cs')
 $staleWi = Test-Stale $wiExe (Join-Path $root 'rainmeter\WifiInfo.cs')
-$staleLw = $RebuildLoopscape -or (Test-Stale $lwExe (Join-Path $root 'wallpaper\Loopscape.cs'))
+$staleLw = $RebuildLoopscape -or (Test-Stale $lwExe (Join-Path $root 'wallpaper\Loopscape\*.cs'))
 if ($staleWf -or $staleWi -or $staleLw) {
   Step 10 'Building Loopscape and the widget helpers'
   Say 'building (build\build.ps1)'
