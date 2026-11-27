@@ -329,12 +329,22 @@ local function groupFits(group, x, y, w, h, obstacles, top, bottom)
   return true, pos
 end
 
+-- Room kept free for a bar along the top of the screen (Settings: "Room for a top bar", TopBarBuffer=1): the height
+-- the bar reserves from the desktop (the work area starts below it), or TopBarHeight for a bar that reserves none.
+-- 0 while the setting is off.
+local function topBar()
+  if num('TopBarBuffer', 0) ~= 1 then return 0 end
+  local reserved = num('WORKAREAY', 0) - num('SCREENAREAY', 0)
+  if reserved > 0 and reserved < num('SCREENAREAHEIGHT', 1080) / 2 then return reserved end
+  return math.max(0, num('TopBarHeight', 28))
+end
+
 -- How high and low a widget may go: near the top, and above the bottom spots' margin (which keeps the taskbar clear).
 -- The same limits hold for snap targets, free placement and stacked widgets, so a group placed anywhere also fits
 -- by its own members' rules.
 local function snapLimits()
   local _, sy, _, sh = screen()
-  return sy + math.floor(px('SnapMargin', 28) / 2), sy + sh - num('SnapBottomMargin', 76)
+  return sy + topBar() + math.floor(px('SnapMargin', 28) / 2), sy + sh - num('SnapBottomMargin', 76)
 end
 
 -- Our position when the group's box sits on screen spot name (tl tc tr / ml mr / bl bc br)
@@ -345,7 +355,7 @@ local function spotPos(name, box)
   local bw, bh = box[3] - box[1], box[4] - box[2]
   local col, row = name:sub(2, 2), name:sub(1, 1)
   local bx = (col == 'l') and sx + m or ((col == 'r') and sx + sw - bw - m or sx + math.floor((sw - bw) / 2))
-  local by = (row == 't') and sy + m or ((row == 'b') and sy + sh - bh - mb or sy + math.floor((sh - bh) / 2))
+  local by = (row == 't') and sy + topBar() + m or ((row == 'b') and sy + sh - bh - mb or sy + math.floor((sh - bh) / 2))
   return bx - box[1], by - box[2]
 end
 
@@ -392,7 +402,8 @@ local function chooseTarget(x, y, w, h)
     -- the grid starts at the screen margin, so it lines up with the corner spots
     local g, m = math.max(4, num('SnapGridSize', 24)), px('SnapMargin', 28)
     fx = sx + m + math.floor((x - sx - m) / g + 0.5) * g
-    fy = sy + m + math.floor((y - sy - m) / g + 0.5) * g
+    local gy = sy + topBar() + m
+    fy = gy + math.floor((y - gy) / g + 0.5) * g
   end
   local box = layoutBox(drag.group, fx, fy, w, h)
   local top, bottom = snapLimits()
@@ -434,6 +445,11 @@ local function placePos(p, box)
   local bw, bh = box[3] - box[1], box[4] - box[2]
   local bx = (p.hx == 'L') and sx + p.ox or ((p.hx == 'R') and sx + sw - p.ox - bw or math.floor(sx + sw / 2 + p.ox - bw / 2))
   local by = (p.vy == 'T') and sy + p.oy or ((p.vy == 'B') and sy + sh - p.oy - bh or math.floor(sy + sh / 2 + p.oy - bh / 2))
+  -- not up under a top bar (the place itself is kept, so turning "Room for a top bar" off puts the widget back)
+  if topBar() > 0 then
+    local top = snapLimits()
+    if by < top then by = top end
+  end
   return bx - box[1], by - box[2]
 end
 

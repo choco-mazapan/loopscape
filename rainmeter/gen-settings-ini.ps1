@@ -28,7 +28,7 @@ A '@Include=#@#Settings.inc'
 A 'TextFont=Space Grotesk'
 A '; Layout: content is PanelWidth-2*Pad wide; tabs and wallpaper tiles share three columns (TileW + TileGap)'
 A 'PanelWidth=460'
-A 'PanelHeight=672'
+A 'PanelHeight=722'
 A 'Pad=22'
 A 'Y0=116'
 A 'RowHeight=50'
@@ -230,6 +230,7 @@ $rows = @(
   @('Widgets',   6, 20, 'SnapGrid',      'Grid for other drops',        'Elsewhere, line up to a grid'),
   @('Widgets',   7, 1,  'MatchWidths',   'Match stacked widths',        'Stacked widgets share one width'),
   @('Widgets',   8, 19, 'SnapBottomMargin', 'Bottom snap spots',        'Their height above the screen''s edge'),
+  @('Widgets',   9, 29, 'TopBarBuffer',  'Room for a top bar',          'Keep widgets below a bar at the top'),
   # Panel darkness first: while it is on, Text pills and Adaptive text colour do nothing
   @('Look',      0, 4,  'PanelAlpha',    'Panel darkness',              'A dark box behind each widget'),
   @('Look',      1, 10, 'TextPills',     'Text pills',                  'A dark pill behind each line of text'),
