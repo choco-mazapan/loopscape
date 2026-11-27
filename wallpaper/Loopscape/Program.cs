@@ -137,6 +137,13 @@ static partial class Loopscape
                     }
                     // Skip to the next style (hotkey, or State\wallnext.txt touched by a widget / the panel)
                     DateTime ns = NextFileStamp();
+                    if (ns != nextStamp)
+                    {
+                        // Writing the file changes its time twice (opened and emptied, then written): we can be woken
+                        // between the two. Read it again once the writer is done, or the second change would skip again.
+                        Thread.Sleep(100);
+                        ns = NextFileStamp();
+                    }
                     if (nextRequested || ns != nextStamp)
                     {
                         nextRequested = false; nextStamp = ns;
