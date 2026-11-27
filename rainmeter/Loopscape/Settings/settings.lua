@@ -280,8 +280,8 @@ function ShowTab(name)
 end
 
 -- ---------- Update Loopscape row (Look tab): what update.ps1 last found, from %LOCALAPPDATA%\Loopscape\updatestatus.txt ----------
--- The file exists only for a Loopscape set up from a git clone, after Update Loopscape has run once; nothing checks
--- GitHub in the background. sync.ps1 deletes it when it installs another commit by hand.
+-- Update Loopscape writes it (update.ps1 for a git clone, Loopscape.exe's Updater.cs for an installed copy); nothing
+-- checks GitHub in the background. sync.ps1 deletes it when it installs another commit by hand.
 local lastUpdateText = nil
 
 local function readUpdateStatus()
@@ -318,6 +318,9 @@ local function showUpdate(force)
   elseif st.state == 'available' and (tonumber(st.count) or 0) > 0 then
     local n = tonumber(st.count)
     hint = n .. ' new change' .. (n == 1 and '' or 's') .. ' on GitHub' .. (day and (', checked ' .. day) or '')
+  elseif st.state == 'available' and (st.latest or '') ~= '' then
+    -- an installed copy: a new release rather than a count of commits
+    hint = 'Version ' .. st.latest .. ' is available' .. (day and (', checked ' .. day) or '')
   end
   local key = label .. '|' .. hint .. '|' .. button
   if key == lastUpdateText and not force then return end
