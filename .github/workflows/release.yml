@@ -22,7 +22,7 @@ jobs:
   installer:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Version
         id: ver
@@ -74,7 +74,7 @@ jobs:
         with:
           subject-path: build/Loopscape-Setup-*.exe
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: installer
           path: |
@@ -87,6 +87,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create '${{ github.ref_name }}' (Get-Item build/Loopscape-Setup-*.exe).FullName build/SHA256SUMS.txt `
-            --draft --title 'Loopscape ${{ steps.ver.outputs.version }}' `
-            --notes 'Download Loopscape-Setup-${{ steps.ver.outputs.version }}.exe and run it. SHA256SUMS.txt has its checksum. Built by the release workflow from this tag; gh attestation verify <file> --repo choco-mazapan/loopscape confirms it.'
+          $tag = '${{ github.ref_name }}'
+          $ver = '${{ steps.ver.outputs.version }}'
+          # The notes list the pull requests merged since the previous app release. The previous release is looked up
+          # by its v* tag, so a styles-v* release in between doesn't cut the list short.
+          $prev = gh release list --exclude-drafts --limit 100 --json tagName --jq '.[].tagName' |
+            Where-Object { $_ -like 'v*' -and $_ -ne $tag } | Select-Object -First 1
+          $notes = "Download **Loopscape-Setup-$ver.exe** below and run it. If you already have Loopscape, it installs " +
+            "over it and keeps your settings and videos. SHA256SUMS.txt has the installer's checksum, and " +
+            "``gh attestation verify Loopscape-Setup-$ver.exe --repo choco-mazapan/loopscape`` confirms that this " +
+            "workflow built it from this tag."
+          $notesArgs = @('--generate-notes')
+          if ($prev) { $notesArgs += @('--notes-start-tag', $prev) }
+          # --latest: once published, this becomes the release that /releases/latest (the README's download link
+          # and the tray menu's Update Loopscape) opens.
+          gh release create $tag (Get-Item build/Loopscape-Setup-*.exe).FullName build/SHA256SUMS.txt `
+            --draft --latest --title "Loopscape $ver" --notes $notes @notesArgs
+          if ($LASTEXITCODE) { throw 'gh release create failed' }

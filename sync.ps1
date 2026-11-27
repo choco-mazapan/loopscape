@@ -2,9 +2,9 @@
 #   - regenerates the settings panel (rainmeter\gen-settings-ini.ps1) and rebuilds WeatherFetch.exe / WifiInfo.exe if
 #     their source changed
 #   - copies the Rainmeter skin to Documents\Rainmeter\Skins\Loopscape, keeping what lives only there:
-#       Settings.inc values (new keys are added), widget layout (SnapAttach, SnapSize, View), the panel's last tab (Tab),
+#       Settings.inc values (new keys are added), widget layout (SnapAttach, SnapPlace, SnapSize, View), the panel's last tab (Tab),
 #       and the bundled fonts (Rainmeter locks them; copied only if missing)
-#   - rebuilds and restarts Loopscape if Loopscape.cs changed (or with -RebuildLoopscape); new Loopscape.ini keys are added
+#   - rebuilds and restarts Loopscape if its source (wallpaper\Loopscape\) changed (or with -RebuildLoopscape); new Loopscape.ini keys are added
 #   - refreshes the widgets
 #   - saves this folder as sourceFolder= in Loopscape.ini, so the tray's Update Loopscape can update from it (update.ps1)
 #   .\sync.ps1            .\sync.ps1 -DryRun            .\sync.ps1 -RebuildLoopscape
@@ -16,7 +16,7 @@ $skinSrc = Join-Path $root 'rainmeter\Loopscape'
 $skinDst = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Rainmeter\Skins\Loopscape'
 $lwDir   = Join-Path $env:USERPROFILE 'Loopscape'
 $rm      = "$env:ProgramFiles\Rainmeter\Rainmeter.exe"
-$runtimeKeys = 'SnapAttach', 'SnapSize', 'View', 'Tab'     # written by the skins at runtime: the live value wins
+$runtimeKeys = 'SnapAttach', 'SnapPlace', 'SnapSize', 'View', 'Tab'     # written by the skins at runtime: the live value wins
 $changed = New-Object System.Collections.Generic.List[string]
 function Say($m) { if ($DryRun) { "[dry run] $m" } else { $m } }
 function Step($percent, $what) { if ($Progress) { "progress $percent $what" } }
@@ -54,7 +54,12 @@ if (-not $DryRun) { & (Join-Path $root 'rainmeter\gen-settings-ini.ps1') | Out-N
 # than the copy in use. WeatherFetch / WifiInfo go into the skin's @Resources, Loopscape into %USERPROFILE%\Loopscape.
 $icon  = Join-Path $root 'rainmeter\Loopscape.ico'
 $built = Join-Path $root 'build\out'
-function Test-Stale($exe, $src) { -not (Test-Path $exe) -or (Get-Item $src).LastWriteTime -gt (Get-Item $exe).LastWriteTime -or (Get-Item $icon).LastWriteTime -gt (Get-Item $exe).LastWriteTime }
+# True when $exe is missing or older than any of its sources ($src may be a wildcard) or the icon
+function Test-Stale($exe, $src) {
+  if (-not (Test-Path $exe)) { return $true }
+  $built = (Get-Item $exe).LastWriteTime
+  [bool](@(Get-Item $src) + (Get-Item $icon) | Where-Object { $_.LastWriteTime -gt $built })
+}
 $wfExe = Join-Path $skinSrc '@Resources\WeatherFetch.exe'; $wiExe = Join-Path $skinSrc '@Resources\WifiInfo.exe'
 $lwExe = Join-Path $lwDir 'Loopscape.exe'
 # installed with the setup program: update that copy
@@ -62,7 +67,7 @@ $installedLw = Join-Path $env:LOCALAPPDATA 'Programs\Loopscape\Loopscape.exe'
 if (Test-Path $installedLw) { $lwExe = $installedLw }
 $staleWf = Test-Stale $wfExe (Join-Path $root 'rainmeter\WeatherFetch.cs')
 $staleWi = Test-Stale $wiExe (Join-Path $root 'rainmeter\WifiInfo.cs')
-$staleLw = $RebuildLoopscape -or (Test-Stale $lwExe (Join-Path $root 'wallpaper\Loopscape.cs'))
+$staleLw = $RebuildLoopscape -or (Test-Stale $lwExe (Join-Path $root 'wallpaper\Loopscape\*.cs'))
 if ($staleWf -or $staleWi -or $staleLw) {
   Step 10 'Building Loopscape and the widget helpers'
   Say 'building (build\build.ps1)'
@@ -140,6 +145,21 @@ if (-not $DryRun -and $changed.Count -gt 0 -and (Test-Path $rm)) {
     # only configs that are open (refreshing a closed one is an error in Rainmeter's log)
     if ($rmText -match "(?ms)^\[$([regex]::Escape($cfg))\]\s*\r?\nActive=([1-9])") { & $rm !Refresh $cfg }
   }
+}
+# The tray menu and the Settings panel say "up to date" from what update.ps1 last found (updatestatus.txt). That was
+# about one commit: once this installs another one (a git pull or checkout by hand), the saved status no longer holds.
+# update.ps1 saves a new one after it runs this.
+$statusFile = Join-Path $env:LOCALAPPDATA 'Loopscape\updatestatus.txt'
+if (-not $DryRun -and (Test-Path $statusFile) -and (Test-Path (Join-Path $root '.git'))) {
+  # when git can't say which commit this is, drop the status too: better no "up to date" than a wrong one
+  $head = $null
+  try {
+    $git = (Get-Command git.exe -ErrorAction SilentlyContinue).Source
+    if (-not $git) { $git = "$env:ProgramFiles\Git\cmd\git.exe" }
+    if (Test-Path $git) { $head = (& $git -C $root rev-parse HEAD | Select-Object -First 1) }
+  } catch { }
+  $saved = (Get-Content -LiteralPath $statusFile | Where-Object { $_ -like 'commit=*' } | Select-Object -First 1) -replace '^commit=', ''
+  if (-not $head -or $saved -ne $head) { Remove-Item -LiteralPath $statusFile -Force -ErrorAction SilentlyContinue }
 }
 if ($changed.Count -eq 0) { Say 'Everything is already up to date.' }
 else { Say "Updated:"; $changed | ForEach-Object { "  $_" } }

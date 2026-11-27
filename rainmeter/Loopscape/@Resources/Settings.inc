@@ -5,18 +5,32 @@
 MatchWidths=1
 ; Snap widgets to screen spots / each other after dragging (1 = on)
 SnapEnabled=1
-; Gap below the bottom-left / bottom-centre / bottom-right snap spots: 76 clears the taskbar, 28 sits over a
-; transparent taskbar (same margin as the other edges), 8 hugs the bottom of the screen
+; How close (px) a dropped widget must be to a screen spot or another widget's edge to snap to it
+SnapRadius=48
+; Dropped farther away: move to the nearest point of a grid (1) or stay exactly where dropped (0)
+SnapGrid=1
+; Grid spacing (px)
+SnapGridSize=24
+; Height of the bottom-left / bottom-centre / bottom-right snap spots above the bottom of the screen, in pixels:
+; 76 clears the taskbar, 28 sits over a transparent taskbar (same margin as the other edges), 8 hugs the bottom of
+; the screen. The Settings panel also takes any number from 0 to 400.
 SnapBottomMargin=76
+; Widget size: 0 = automatic (bigger on screens taller than 1080 pixels: 1.25 at 1440p, 2 at 4K), or a factor:
+; 1 (100%), 1.25, 1.5, 1.75, 2 or 2.5. See Scale.inc
+WidgetScale=0
 ; Clock: 24 (14:30) or 12 (2:30 PM)
 ClockFormat=12
+; Clock date line, as a Rainmeter Time format: %a, %#d %B (Wed, 25 November), %a, %m/%d/%y (Wed, 11/25/26),
+; %a, %d/%m/%y (Wed, 25/11/26), %a, %m/%d/%Y (Wed, 11/25/2026) or %a, %d/%m/%Y (Wed, 25/11/2026)
+DateFormat=%a, %#d %B
 ; fahrenheit or celsius
 WeatherUnit=celsius
 ; Weather location: city (the city below) or windows (Windows location service; Windows asks for permission)
 WeatherLocation=city
 ; City for the weather, e.g. Paris or Paris, France
 WeatherCity=
-; Panel darkness behind the text: 0 off (no tint), 110 light, 150 medium, 200 dark
+; Panel darkness: a dark rounded box behind each widget. 0 off (no box), 110 light, 150 medium, 200 dark. While it is
+; on, the text is always white, so Text pills and TextColorMode are not used
 PanelAlpha=0
 ; Effect around text: Shadow, Border (outline) or None
 TextEffect=Shadow
@@ -27,9 +41,10 @@ TextBoost=5
 TextPills=1
 ; Animate the clock's weather icon: falling rain and snow, twinkling stars, flashing lightning (1 = on)
 AnimateWeather=0
-; Adaptive text colour when the panel tint is off: off, contrast (white/dark), smooth (white/dark with fades, checked
-; every second), tinted (colours taken from the wallpaper), smoothtinted, perline (each line on its own)
-TextColorMode=contrast
+; Adaptive text colour when the panel is off: smooth (white or dark text to suit the wallpaper, checked every second,
+; fades between them) or off. The Settings panel offers only these two; Loopscape also still reads the older modes
+; contrast, tinted, smoothtinted and perline, and the panel shows them as On
+TextColorMode=smooth
 ; Clock widget shown (1) or hidden (0)
 ShowClock=1
 ; Wi-Fi widget shown (1) or hidden (0)
@@ -63,3 +78,6 @@ WallWeather=0
 WallOnBattery=pause
 ; freeze the video while a window covers the desktop (1 = on)
 WallPauseCovered=1
+; keep the wallpaper moving on battery and behind full-screen windows (1 = on, 0 = off). Empty: use alwaysAnimate=
+; in Loopscape.ini. The tray's Always animate sets this too
+WallAlwaysAnimate=

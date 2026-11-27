@@ -18,7 +18,7 @@ Inspired by [this post](https://x.com/morrre_dsgn/status/2123935510276288717).
 
 Loopscape works on 64-bit Windows 10 and 11.
 
-1. Download `Loopscape-Setup-<version>.exe` from [Releases](https://github.com/choco-mazapan/loopscape/releases).
+1. Download `Loopscape-Setup-<version>.exe` from the [newest release](https://github.com/choco-mazapan/loopscape/releases/latest). If you already have Loopscape, the new installer goes over it and keeps your settings and videos.
 2. Run it. It installs for your user only, so there's no administrator prompt (except Rainmeter's own installer, if you tick it).
 3. Type your city for the weather, and leave **Install Rainmeter** ticked if you don't have it. Rainmeter is the free, open-source program that draws the widgets.
 
@@ -63,7 +63,7 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and No
 
 | Widget | What it shows |
 |---|---|
-| **Clock** | The time and date, battery level and time left, the current weather and a three-day forecast. Settings → Widgets → *Animate weather icon* makes the current weather icon move: rain and snow fall, stars twinkle and lightning flashes. It is off by default and pauses while a window covers the desktop. |
+| **Clock** | The time and date, the current weather and a three-day forecast. On laptops and tablets it also shows the battery level and time left; on desktops the battery line is hidden. Settings → Look → *Animate weather icon* makes the current weather icon move: rain and snow fall, stars twinkle and lightning flashes. It is off by default and pauses while a window covers the desktop. |
 | **Network** | On Wi‑Fi, the network name and signal, band, channel, link speed and security. On Ethernet, the adapter, link speed, gateway, DNS server and MAC address. Both show the local IP address, live ping and download and upload speed. |
 | **Now Showing** | The wallpaper style on screen and when rotation will change it, with buttons to go back, pause, skip ahead or keep the current style. |
 | **Sun & Moon** | The sun's path across today's sky, the next sunrise or sunset, and the moon's phase. |
@@ -71,11 +71,15 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and No
 | **System** | Processor and memory use, and free space on drive C:. |
 | **Calendar** | This month with today circled. Scroll over it to see other months. The week starts on the day set in Windows. |
 
-**Placement.** Each wallpaper style suggests a calm spot for the widgets, and they move there when the style changes (Settings → Rotation → *Move widgets with wallpaper*). Drag a widget and it snaps to screen spots and to the other widgets; stacked widgets share one width. Settings → Widgets has switches for snapping, matching widths, and how far the bottom spots sit from the taskbar.
+**Placement.** Each wallpaper style suggests a calm spot for the widgets, and they move there when the style changes (Settings → Rotation → *Move widgets with wallpaper*). Drop a widget near a screen spot, or next to another widget's edge or corners, and it snaps there; anywhere else it lines up on a grid. Widgets stacked on each other move together and share one width. Settings → Widgets sets how close a drop has to land to snap, a grid for drops that land elsewhere, matching widths, and the height of the bottom snap spots (above the taskbar, over it, at the screen edge, or any number of pixels). It also sets the clock's date format.
 
 **Views.** Middle-click a widget, or right-click it, to pick a view. The Clock, for example, has Full, Simple, Compact and Time only, and Network has Full, Simple and Speeds.
 
-**Readability.** Settings → Look controls how the text stands out from the wallpaper: a text boost from a soft shadow to a bold outline, text colour that adapts to the wallpaper, a tinted panel behind the text, and pills behind each line.
+**Readability.** Settings → Look controls how the text stands out from the wallpaper. *Panel darkness* puts a dark box behind each widget. With the panel off, the text can sit on pills and turn light or dark to suit the wallpaper. *Text boost* adds anything from a soft shadow to a bold outline.
+
+**Size.** Settings → Look → *Widget size* makes the widgets bigger. On *Auto* they grow with the screen: 100% up to 1080p, 125% at 1440p, 200% at 4K. You can also pick a fixed size from 100% to 250%.
+
+**Profiles.** Settings → Profiles saves everything in the panel, plus each widget's view, to one of three slots. Load a slot to switch back to that setup.
 
 ## Using Loopscape
 
@@ -106,8 +110,10 @@ Click the Loopscape tray icon to open the widgets' Settings panel, or right-clic
 
 *Update Loopscape* is in the tray menu and in Settings → Look.
 
-- If you installed with the setup program, it opens the [Releases](https://github.com/choco-mazapan/loopscape/releases) page so you can download the newest installer.
+- If you installed with the setup program, it opens a window that asks GitHub for the newest published release and compares it with your version. Press **Update** to download its installer: Loopscape checks the file against the release's `SHA256SUMS.txt` and the size and version GitHub lists, then runs it. Setup shows only its progress bar, keeps your settings, widgets, styles and *Start with Windows*, and starts the new Loopscape, which then says it was updated. Versions 1.0.0 and older open the [newest release](https://github.com/choco-mazapan/loopscape/releases/latest) instead, so install the next version from there once.
 - If you run Loopscape from a git clone of this repository (see [Building from source](#building-from-source)), it opens a window that lists the new changes to Loopscape and its widgets, with this PC's version and the new one. **Update** turns on once GitHub reports that the new version passed its build checks, which takes a few minutes after a change. Press it to get them: a progress bar follows the rebuild, and the window then shows what was updated. Changes only to files Loopscape doesn't use, such as this README, the screenshots or the installer, aren't listed and don't count as an update.
+
+After it has checked once, the tray menu and Settings → Look show the result: *Loopscape is up to date* with this PC's version, or what's waiting. The result is from the last time you chose *Update Loopscape*; Loopscape doesn't check by itself.
 
 ## Make your own style with Claude
 
@@ -148,7 +154,7 @@ This section is for developers. You don't need any of it to use Loopscape.
 
 | Path | Contents |
 |---|---|
-| `wallpaper/` | The Loopscape launcher (`Loopscape.cs`) and the video and still renderers (`make-loop.ps1`, `styles/`). |
+| `wallpaper/` | The Loopscape launcher (`Loopscape/`, one C# file per part: `Program.cs` holds the main loop, `InstallerUpdate.cs` updates an installed copy) and the video and still renderers (`make-loop.ps1`, `styles/`). |
 | `rainmeter/Loopscape/` | The Rainmeter skin: Clock, WiFi (the Network widget), NowShowing, SunMoon, Rain, System, Calendar, Settings, ViewMenu and SnapGuides, with shared code in `@Resources` (`snap.lua` handles placement and snapping). Versions before 1.1 installed it as `Skins\LaptopInfo`; the installer moves it. |
 | `rainmeter/WeatherFetch.cs`, `rainmeter/WifiInfo.cs` | Helpers the skin calls. |
 | `rainmeter/gen-settings-ini.ps1` | Generates `Settings/Settings.ini`. Edit the script, not the generated file. |
@@ -160,7 +166,7 @@ This section is for developers. You don't need any of it to use Loopscape.
 
 ### Run from a clone
 
-Clone the repository and run `.\sync.ps1`. After that, *Update Loopscape* runs `update.ps1`, which fetches `origin/main`, lists the new commits and asks the GitHub API whether the jobs in `.github/workflows/check.yml` passed on that exact commit. It installs nothing that failed or wasn't checked, and it refuses an `origin` that isn't on GitHub unless you run `update.ps1 -SkipCheck`. After you press **Update**, it fast-forwards the clone to the checked commit, runs `sync.ps1 -Progress` and shows the result (details in `%USERPROFILE%\Loopscape\update.log`). If the clone has local changes or is on another branch, the window says so, and Update sets them aside with `git stash` and switches to `main`. Run `git stash pop` to bring the changes back.
+Clone the repository and run `.\sync.ps1`. After that, *Update Loopscape* runs `update.ps1`, which fetches `origin/main`, lists the new commits and asks the GitHub API whether the jobs in `.github/workflows/check.yml` passed on that exact commit. It installs nothing that failed or wasn't checked, and it refuses an `origin` that isn't on GitHub unless you run `update.ps1 -SkipCheck`. After you press **Update**, it fast-forwards the clone to the checked commit, runs `sync.ps1 -Progress` and shows the result (details in `%USERPROFILE%\Loopscape\update.log`). It saves what it found in `%LOCALAPPDATA%\Loopscape\updatestatus.txt` for the tray menu and the Settings panel; `sync.ps1` deletes that file when it installs a different commit, so a manual `git pull` and sync never leave a stale *up to date*. If the clone has local changes or is on another branch, the window says so, and Update sets them aside with `git stash` and switches to `main`. Run `git stash pop` to bring the changes back.
 
 Versions are the last `v` tag plus the number of commits since it (`v1.0.0` plus 45 commits is 1.0.0.45). `update.ps1 -DryRun` changes nothing.
 
@@ -181,10 +187,13 @@ HEVC and AV1 files are kept only if they're at least 15% smaller than H.264 and 
 
 ### Make a release
 
-1. Run `build\make-styles-release.ps1`.
-2. Upload `build\styles-release` to the `styles-v1` release.
+If the styles changed (new or re-rendered videos or stills):
+
+1. Run `build\make-styles-release.ps1 -Tag styles-v<n>` with a new tag.
+2. Make a `styles-v<n>` release from `build\styles-release` with **Set as the latest release** turned off (`gh release create styles-v<n> build\styles-release\* --latest=false`), so the README's download link keeps pointing at the installer.
 3. Commit `installer\styles.json` and `installer\styles-SHA256SUMS.txt`.
-4. Push a `v*` tag. The [release workflow](.github/workflows/release.yml) builds the installer and makes a draft release.
+
+Then push a `v*` tag on `main`, such as `git tag v1.1.0 && git push origin v1.1.0`. The [release workflow](.github/workflows/release.yml) builds the installer and makes a draft release with it, `SHA256SUMS.txt` and notes listing the pull requests since the previous `v*` release. Look it over and publish it; it then becomes the latest release.
 
 ## License
 
