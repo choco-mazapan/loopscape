@@ -29,12 +29,15 @@ static partial class Loopscape
     {
         foreach (string dir in new[] { Dir, Res, State }) WatchFolder(dir);
 
-        // Power: SystemEvents needs a thread that handles window messages. Subscribed from a new thread (which isn't
+        // Power and displays: SystemEvents needs a thread that handles window messages. Subscribed from a new thread (which isn't
         // single-threaded like Main), it starts one of its own.
         var power = new Thread(delegate ()
         {
             try { Microsoft.Win32.SystemEvents.PowerModeChanged += delegate { Wake.Set(); }; }
             catch (Exception e) { Log("power notifications: " + e.Message); }
+            // Monitors plugged in or out, moved or set to another resolution (FitSurfaces follows them)
+            try { Microsoft.Win32.SystemEvents.DisplaySettingsChanged += delegate { NoteDisplayChange(); }; }
+            catch (Exception e) { Log("display notifications: " + e.Message); }
         });
         power.IsBackground = true;
         power.Start();

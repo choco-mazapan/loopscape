@@ -14,7 +14,7 @@ using System.Collections.Generic;
 static partial class Loopscape
 {
     // ---------------- Desktop attach ----------------
-    // Returns the window mpv should render into (behind the icons), or IntPtr.Zero.
+    // Returns the WorkerW window behind the desktop icons that the wallpaper windows (Surface) go into, or IntPtr.Zero.
     static IntPtr FindWallpaperHost()
     {
         IntPtr progman = FindWindow("Progman", null);

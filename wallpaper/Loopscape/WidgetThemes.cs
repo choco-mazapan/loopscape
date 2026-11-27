@@ -176,7 +176,7 @@ static class WidgetThemes
         public int L, T, R, B;              // ring coordinates (screen px)
         System.Drawing.Bitmap top, bottom, left, right;
         int vx, vy, vw, vh;
-        System.Drawing.Bitmap img;          // set: read from this frame (filling the primary screen) instead of the screen
+        System.Drawing.Bitmap img;          // set: read from this frame (filling the main surface) instead of the screen
         double iScale, iOffX, iOffY;
         public Ring(RECT r) : this(r, null) { }
         public Ring(RECT r, System.Drawing.Bitmap image)
@@ -185,11 +185,11 @@ static class WidgetThemes
             L = r.L - Gap; T = r.T - Gap; R = r.R + Gap; B = r.B + Gap;
             if (image != null)
             {
-                // the video fills the screen like mpv shows it: scaled to cover, centred, edges cropped
+                // the video fills the main surface like mpv shows it: scaled to cover, centred, edges cropped
                 img = image;
-                int sw = GetSystemMetrics(0), sh = GetSystemMetrics(1);
-                iScale = Math.Max(sw / (double)img.Width, sh / (double)img.Height);
-                iOffX = (sw - img.Width * iScale) / 2; iOffY = (sh - img.Height * iScale) / 2;
+                int[] s = Loopscape.MainBounds ?? new[] { 0, 0, GetSystemMetrics(0), GetSystemMetrics(1) };
+                iScale = Math.Max(s[2] / (double)img.Width, s[3] / (double)img.Height);
+                iOffX = s[0] + (s[2] - img.Width * iScale) / 2; iOffY = s[1] + (s[3] - img.Height * iScale) / 2;
                 return;
             }
             top = Grab(L, T, R - L + 1, 1); bottom = Grab(L, B, R - L + 1, 1);
