@@ -661,10 +661,21 @@ EndEditCity = EndEdit
 local function openList(key, meterName, items, sel, pick)
   local value = SKIN:GetMeter(meterName)
   local n = math.min(#items, DD_MAX)
-  local w = 210
+  -- As wide as the longest item: each item is 10 px of padding either side of its text, inside 4 px of list. At least
+  -- 210 px, and never wider than the panel's content. The list lines up with the right edge of its button.
+  local panelW, pad = tonumber(SKIN:GetVariable('PanelWidth')) or 460, tonumber(SKIN:GetVariable('Pad')) or 22
+  local textW, probe = 0, SKIN:GetMeter('DDMeasure')
+  if probe then
+    for i = 1, n do
+      SKIN:Bang('!SetOption', 'DDMeasure', 'Text', items[i])
+      SKIN:Bang('!UpdateMeter', 'DDMeasure')
+      textW = math.max(textW, probe:GetW())
+    end
+  end
+  local w = math.min(panelW - 2 * pad, math.max(210, math.ceil(textW) + 2 * 10 + 2 * 4))
   local itemH = tonumber(SKIN:GetVariable('DDItemH')) or 28
   local h = n * itemH + 8
-  local x = (tonumber(SKIN:GetVariable('PanelWidth')) or 460) - (tonumber(SKIN:GetVariable('Pad')) or 22) - w
+  local x = panelW - pad - w
   local y = value:GetY() + value:GetH() + 4
   -- open upwards when the list would run past the bottom of the panel
   local panelH = tonumber(SKIN:GetVariable('PanelHeight')) or SKIN:GetMeter('MeterPanel'):GetH()

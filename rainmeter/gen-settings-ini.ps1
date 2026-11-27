@@ -343,6 +343,10 @@ A 'SolidColor=0,0,0,1'; A 'LeftMouseUpAction=[!CommandMeasure MeasureSettings "C
 A '[DDBack]'; A 'Meter=Shape'; A 'Group=Dropdown'; A 'Hidden=1'; A 'X=#DDX#'; A 'Y=#DDY#'
 A 'Shape=Rectangle 0,0,#DDBackW#,(#DDCount#*#DDItemH#+8),10 | Fill Color 16,18,28,250 | StrokeWidth 1 | Stroke Color 255,255,255,55'
 A 'DynamicVariables=1'; A ''
+A '; An invisible copy of an item''s text: settings.lua sets it to each item and reads its width, to fit the list to the'
+A '; longest one'
+A '[DDMeasure]'; A 'Meter=String'; A 'MeterStyle=StyleText'; A 'Text='; A 'X=0'; A 'Y=0'; A 'FontSize=12'
+A 'FontColor=0,0,0,0'; A 'StringEffect=None'; A ''
 A '; Item positions are set by settings.lua'
 foreach ($i in 1..8) {
   A "[DDItem$i]"; A 'Meter=String'; A 'Group=Dropdown'; A 'Hidden=1'; A 'MeterStyle=StyleText'; A 'Text='
