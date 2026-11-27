@@ -52,6 +52,7 @@ static partial class Loopscape
                 };
                 tray.MouseMove += delegate { UpdateTrayTip(); };
                 tray.Visible = true;
+                FinishInstallerUpdate(tray);
                 AppDomain.CurrentDomain.ProcessExit += delegate { try { tray.Visible = false; tray.Dispose(); } catch { } };
                 Log("tray icon on");
                 System.Windows.Forms.Application.Run();
@@ -74,13 +75,14 @@ static partial class Loopscape
             // MouseMove fires many times a second over the icon: read the files at most every few seconds
             if ((DateTime.UtcNow - tipStatusRead).TotalSeconds > 5)
             {
-                tipStatus = UpdateScript() != null ? UpdateStatus() : null;
+                tipStatus = UpdateStatus();
                 tipStatusRead = DateTime.UtcNow;
             }
             UpdateInfo info = tipStatus;
             if (info != null)
             {
-                string line = info.UpToDate ? "Up to date (" + info.Version + ")" : "Update available (" + info.Count + " new)";
+                string line = info.UpToDate ? "Up to date (" + info.Version + ")"
+                            : info.Count > 0 ? "Update available (" + info.Count + " new)" : "Update available (" + info.Latest + ")";
                 if (tip.Length + 1 + line.Length <= 63) tip += "\n" + line;
             }
             if (tip.Length > 63) tip = tip.Substring(0, 63);
@@ -207,12 +209,13 @@ static partial class Loopscape
         autostart.Click += delegate { SetStartWithWindows(!StartsWithWindows()); };
         menu.Items.Add(autostart);
         bool updating = UpdateRunning();
-        bool fromClone = UpdateScript() != null;
-        UpdateInfo info = fromClone && !updating ? UpdateStatus() : null;
+        bool fromClone = UpdateScript() != null, installed = !fromClone && InstalledVersion() != null;
+        UpdateInfo info = (fromClone || installed) && !updating ? UpdateStatus() : null;
         var update = new System.Windows.Forms.ToolStripMenuItem(updating ? "Updating Loopscape..." : "Update Loopscape");
         update.Enabled = !updating;
         update.ToolTipText = fromClone ? "Get the latest version from GitHub, rebuild it and refresh the widgets"
-                                       : "Open the Releases page to download the newest installer";
+                           : installed ? "Check GitHub for a newer version and install it"
+                           : "Open the Releases page to download the newest installer";
         if (info != null && info.UpToDate)
         {
             update.Text = "Loopscape is up to date";
@@ -221,10 +224,19 @@ static partial class Loopscape
         }
         else if (info != null)
         {
-            update.Text = "Update Loopscape (" + info.Count + " new)";
             update.ShortcutKeyDisplayString = info.Latest;
-            update.ToolTipText = info.Count + " new change" + (info.Count == 1 ? "" : "s") + " on GitHub when checked " + info.CheckedText +
-                                 ". Click to see them and update";
+            if (info.Count > 0)
+            {
+                update.Text = "Update Loopscape (" + info.Count + " new)";
+                update.ToolTipText = info.Count + " new change" + (info.Count == 1 ? "" : "s") + " on GitHub when checked " + info.CheckedText +
+                                     ". Click to see them and update";
+            }
+            else
+            {
+                // an installed copy: a new release rather than a count of commits
+                update.Text = "Update Loopscape";
+                update.ToolTipText = "Version " + info.Latest + " was on GitHub when checked " + info.CheckedText + ". Click to update";
+            }
         }
         update.Click += delegate { ThreadPool.QueueUserWorkItem(delegate { StartUpdate("tray"); }); };
         menu.Items.Add(update);
