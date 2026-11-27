@@ -16,9 +16,13 @@ end
 -- Shows or hides the battery line. This measure runs before the meters, so they and the layout formulas
 -- (DateBlockBottom) read the new BatteryShown in the same update. A later switch always changes the text too
 -- ('' while hidden), so MeasureBatteryText's OnChangeAction does the two-pass redraw.
+-- DateBlockBottom is set here too: Rainmeter fills in the #BatteryShown# inside its definition once, when the skin
+-- loads (BatteryShown=0), so changing BatteryShown alone left the forecast row under the date, over the battery line.
 local function setShown(v)
   if v ~= shown then
     SKIN:Bang('!SetVariable', 'BatteryShown', v and 1 or 0)
+    SKIN:Bang('!SetVariable', 'DateBlockBottom',
+      v and '([MeterBattery:Y]+[MeterBattery:H])' or '([MeterDate:Y]+[MeterDate:H])')
     shown = v
   end
 end
