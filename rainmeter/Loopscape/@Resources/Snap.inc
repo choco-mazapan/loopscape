@@ -21,6 +21,9 @@ SnapGapClear=-16
 ; Widgets that know about each other (config names, separated by |)
 SnapPeers=Loopscape\Clock|Loopscape\WiFi|Loopscape\NowShowing|Loopscape\SunMoon|Loopscape\Rain|Loopscape\System|Loopscape\Calendar
 SnapAttach=
+; Views (numbers, separated by |) in which the widget stands alone: it doesn't stack on other widgets, and they don't
+; stack on it. Switching to one of these views detaches it from its stack. Empty: every view stacks.
+SnapAloneViews=
 ; Where a free-standing widget is parked, written automatically: a screen spot (spot:br) or its distance from the
 ; nearest screen edges (free:R,40,B,120), so it keeps that place when it changes size
 SnapPlace=

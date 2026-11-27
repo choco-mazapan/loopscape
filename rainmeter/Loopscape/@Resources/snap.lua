@@ -194,9 +194,9 @@ local function peerRects(includeFollowers)
   local out, all = {}, {}
   for _, p in ipairs(peers) do
     local s = SKIN:GetVariable('Peer_' .. key(p), '')
-    -- "x,y,w,h,attachedTo,naturalWidth,rel,loadedMs" (older versions sent only the first six)
-    local x, y, w, h, att, nat, rel, ld = s:match('^(-?%d+),(-?%d+),(%d+),(%d+),?([^,]*),?(%d*),?(%a*),?(%d*)$')
-    local r = x and { tonumber(x), tonumber(y), tonumber(w), tonumber(h), att, tonumber(nat), rel, tonumber(ld) }
+    -- "x,y,w,h,attachedTo,naturalWidth,rel,loadedMs,alone" (older versions sent only the first six or eight)
+    local x, y, w, h, att, nat, rel, ld, al = s:match('^(-?%d+),(-?%d+),(%d+),(%d+),?([^,]*),?(%d*),?(%a*),?(%d*),?(%d*)$')
+    local r = x and { tonumber(x), tonumber(y), tonumber(w), tonumber(h), att, tonumber(nat), rel, tonumber(ld), al == '1' }
     -- while checking who's still there, a widget that hasn't answered yet counts as where it was
     if not r and recheck and recheck.old then r = recheck.old[p] end
     if r then all[p] = r end
@@ -227,6 +227,16 @@ end
 -- purpose (SnapGapClear is negative) to bring the text lines together.
 local function gap()
   return (num('PanelAlpha', 0) == 0) and px('SnapGapClear', -16) or px('SnapGap', 12)
+end
+
+-- Whether we stand alone in the current view (SnapAloneViews in Snap.inc): we don't stack on other widgets, and they
+-- don't stack on us. A peer that stands alone says so in its broadcast (field 9 of its rect, see peerRects).
+local function alone()
+  local v = SKIN:GetVariable('View', '0')
+  for n in (SKIN:GetVariable('SnapAloneViews', '')):gmatch('[^|]+') do
+    if n == v then return true end
+  end
+  return false
 end
 
 -- Whether rect a (x, y, w, h) covers rect r. Overlap up to the stacking overlap above (plus a few pixels) doesn't
@@ -274,9 +284,11 @@ local function groupOf(x, y, w, h, at)
   local queue, qi, seen = { me }, 1, { [me] = true }
   while qi <= #queue do
     local parent = queue[qi]; qi = qi + 1
+    -- a widget that stands alone carries nothing (anything still stacked on it is about to let go)
+    local carries = not ((parent == me) and alone() or (rects[parent] and rects[parent][9]))
     for _, p in ipairs(peers) do   -- in SnapPeers order, so the layout is the same every time
       local r = rects[p]
-      if r and not seen[p] and r[5] == parent then
+      if carries and r and not seen[p] and r[5] == parent then
         seen[p] = true; queue[#queue + 1] = p
         local px, py = r[1], r[2]
         if at and at[p] then px, py = at[p][1], at[p][2] end
@@ -372,10 +384,14 @@ local function buildTargets(group, w, h, obstacles)
     x, y = spotPos(s, layoutBox(group, x, y, w, h))
     add({ spot = s }, x, y)
   end
-  for p, r in pairs(obstacles) do
-    for _, rel in ipairs(RELS) do
-      local x, y = stackPos(r, rel, w, h)
-      add({ peer = p, rel = rel }, x, y)
+  if not alone() then
+    for p, r in pairs(obstacles) do
+      if not r[9] then
+        for _, rel in ipairs(RELS) do
+          local x, y = stackPos(r, rel, w, h)
+          add({ peer = p, rel = rel }, x, y)
+        end
+      end
     end
   end
   return list
@@ -556,8 +572,8 @@ function Broadcast(bx, by)
     savedW, savedH = w, h
     SKIN:Bang('!WriteKeyValue', 'Variables', 'SnapSize', w .. ',' .. h)
   end
-  local s = string.format('%d,%d,%d,%d,%s,%d,%s,%d', bx or SKIN:GetX(), by or SKIN:GetY(), w, h,
-    attach and attach.peer or '', lastNat, attach and attach.rel or '', math.floor(loadedAt * 1000))
+  local s = string.format('%d,%d,%d,%d,%s,%d,%s,%d,%d', bx or SKIN:GetX(), by or SKIN:GetY(), w, h,
+    attach and attach.peer or '', lastNat, attach and attach.rel or '', math.floor(loadedAt * 1000), alone() and 1 or 0)
   for _, p in ipairs(livePeers()) do
     SKIN:Bang('!SetVariable', 'Peer_' .. key(me), s, p)
     -- let the other widget follow/match now rather than on its next tick
@@ -801,7 +817,7 @@ function stackFallback()
   local rects = peerRects(true)
   for _, p in ipairs(peers) do
     local r = rects[p]
-    if r and (attach == nil or p ~= attach.peer) and not followsMe(p) then
+    if r and not r[9] and (attach == nil or p ~= attach.peer) and not followsMe(p) then
       local taken = false
       for q, r2 in pairs(rects) do if q ~= p and r2[5] == p then taken = true end end
       if not taken then return p end
@@ -1135,6 +1151,18 @@ function Update()
   end
   local sizeChanged = (w ~= lastW or h ~= lastH)
   lastW, lastH = w, h
+
+  -- We switched to a view that stands alone, or the widget we sit on did: let go and park where we are. (The widget
+  -- we sat on hears of it from our next broadcast.)
+  if attach and not dragging then
+    local r = peerRects(true)[attach.peer]
+    if alone() or (r and r[9]) then
+      dbg('detached from ' .. attach.peer .. ': one of us stands alone in this view')
+      attach, place = nil, nil
+      saveAttach()
+      still = STILL_TICKS
+    end
+  end
 
   local tx, ty
   if dragging then
