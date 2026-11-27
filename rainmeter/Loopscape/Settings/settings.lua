@@ -773,8 +773,18 @@ local function writeProfile(i, name)
   local inc = readIni(INC) or {}
   local lines = { '; Loopscape widget profile (Settings panel > Profiles). Load it from there.', '[Profile]',
                   'Name=' .. name, 'Saved=' .. savedStamp(), '', '[Settings]' }
+  inc.Variables = inc.Variables or {}
+  -- a Settings.inc kept from an older version lacks the settings added since; save their defaults (what the panel
+  -- shows), so loading this profile later puts them back instead of keeping whatever they were changed to
+  for _, r in ipairs(ROWS) do
+    if r[4] ~= nil and not r.compound and inc.Variables[r[1]] == nil then
+      local v = r[4]
+      if type(v) == 'function' then v = v() end
+      if type(v) == 'string' then inc.Variables[r[1]] = v end
+    end
+  end
   local keys = {}
-  for k in pairs(inc.Variables or {}) do keys[#keys + 1] = k end
+  for k in pairs(inc.Variables) do keys[#keys + 1] = k end
   table.sort(keys)
   for _, k in ipairs(keys) do lines[#lines + 1] = k .. '=' .. inc.Variables[k] end
   lines[#lines + 1] = ''
