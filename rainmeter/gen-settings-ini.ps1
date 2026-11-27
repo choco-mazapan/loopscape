@@ -33,9 +33,11 @@ A 'Pad=22'
 A 'Y0=116'
 A 'RowHeight=50'
 A '; Widgets tab: where its setting rows start (below the widget tiles)'
-A 'WRowsY=140'
+A 'WRowsY=100'
 A 'LabelW=250'
 A 'TileW=134'
+A '; Widgets tab: four widget tiles across the content width: (PanelWidth - 2*Pad - 3*TileGap) / 4'
+A 'WTileW=98.75'
 A 'TileH=30'
 A 'TileGap=7'
 A '; five tabs across the content width: (PanelWidth - 2*Pad - 4*TabGap) / 5'
@@ -221,11 +223,13 @@ $rows = @(
   @('Widgets',   0, 7,  'ClockFormat',   'Clock format',                '14:30 or 2:30 PM'),
   @('Widgets',   1, 6,  'DateFormat',    'Date format',                 'How the clock writes the date'),
   @('Widgets',   2, 3,  'WeatherUnit',   'Temperature',                 'Unit for weather and forecast'),
-  @('Widgets',   3, 2,  'SnapEnabled',   'Snap after dragging',         'To screen spots and each other'),
-  @('Widgets',   4, 1,  'MatchWidths',   'Match stacked widths',        'Stacked widgets share one width'),
-  @('Widgets',   5, 19, 'SnapBottomMargin', 'Bottom snap spots',        'Their height above the screen''s edge'),
-  @('Widgets',   6, 21, 'WeatherLocation', 'Weather location',          'A city you type, or Windows location'),
-  @('Widgets',   7, 22, '#city',         'City',                        'Click to type it, then press Enter'),
+  @('Widgets',   3, 21, 'WeatherLocation', 'Weather location',          'A city you type, or Windows location'),
+  @('Widgets',   4, 22, '#city',         'City',                        'Click to type it, then press Enter'),
+  # Snap after dragging sets both SnapEnabled and SnapRadius; Grid sets SnapGrid and SnapGridSize (settings.lua)
+  @('Widgets',   5, 2,  'SnapEnabled',   'Snap after dragging',         'How near a spot a drop has to land'),
+  @('Widgets',   6, 20, 'SnapGrid',      'Grid for other drops',        'Elsewhere, line up to a grid'),
+  @('Widgets',   7, 1,  'MatchWidths',   'Match stacked widths',        'Stacked widgets share one width'),
+  @('Widgets',   8, 19, 'SnapBottomMargin', 'Bottom snap spots',        'Their height above the screen''s edge'),
   # Panel darkness first: while it is on, Text pills and Adaptive text colour do nothing
   @('Look',      0, 4,  'PanelAlpha',    'Panel darkness',              'A dark box behind each widget'),
   @('Look',      1, 10, 'TextPills',     'Text pills',                  'A dark pill behind each line of text'),
@@ -303,9 +307,9 @@ A '[MeterWidgetsHint]'; A 'Meter=String'; A 'MeterStyle=StyleText | StyleHint'; 
 A 'Text=Click to show or hide'; A 'X=(#PanelWidth#-#Pad#)'; A 'W=260'; A 'StringAlign=Right'; A 'Y=(#Y0#-4)'; A ''
 $widgets = 'Clock', 'Network', 'Now Showing', 'Sun & Moon', 'Rain', 'System', 'Calendar'
 for ($i = 0; $i -lt $widgets.Count; $i++) {
-  $n = $i + 1; $c = $i % 3; $rw = [math]::Floor($i / 3)
+  $n = $i + 1; $c = $i % 4; $rw = [math]::Floor($i / 4)
   A "[MeterWTile$n]"; A 'Meter=String'; A 'MeterStyle=StyleText | StyleTile'; A 'Group=TabWidgets'; A 'Hidden=1'
-  A "Text=$($widgets[$i])"; A "X=(#Pad#+#TileW#/2+$c*(#TileW#+#TileGap#))"; A "Y=(#Y0#+18+#TileH#/2+$rw*(#TileH#+8))"
+  A "Text=$($widgets[$i])"; A 'W=#WTileW#'; A "X=(#Pad#+#WTileW#/2+$c*(#WTileW#+#TileGap#))"; A "Y=(#Y0#+18+#TileH#/2+$rw*(#TileH#+8))"
   A "SolidColor=[#WTileBase$n]"; A "FontColor=[#WTileFont$n]"
   A "MouseOverAction=[!SetOption MeterWTile$n SolidColor #ColorTileHover#][!UpdateMeter MeterWTile$n][!Redraw]"
   A "MouseLeaveAction=[!SetOption MeterWTile$n SolidColor `"[#*WTileBase$n*]`"][!UpdateMeter MeterWTile$n][!Redraw]"
