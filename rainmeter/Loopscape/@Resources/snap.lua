@@ -1314,7 +1314,7 @@ function stepWallFade()   -- global: Update (above) calls it
 end
 
 -- ---------- adaptive text colour ----------
--- Loopscape samples the wallpaper around each widget and writes %LOCALAPPDATA%\Loopscape\bgtheme.txt (see Loopscape.cs, WidgetThemes):
+-- Loopscape samples the wallpaper around each widget and writes %LOCALAPPDATA%\Loopscape\bgtheme.txt (see wallpaper\Loopscape\WidgetThemes.cs):
 --   mode=<off|contrast|smooth|tinted|smoothtinted|perline>
 --   W|<config>|text=R,G,B|pill=R,G,B,A|shadow=R,G,B,A          whole widget
 --   L|<config>|<meter>|text=...|pill=...|shadow=...             per line (perline mode)
