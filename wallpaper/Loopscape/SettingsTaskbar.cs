@@ -20,6 +20,7 @@ static partial class Loopscape
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetWindowText")]
     static extern int GetWindowTitle(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int index);
     [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int index, int value);
     [DllImport("user32.dll", EntryPoint = "SetWindowPos")]
@@ -43,14 +44,18 @@ static partial class Loopscape
     // Loaded once and never freed: the panel's window keeps drawing them for as long as it is open
     static IntPtr settingsIconBig, settingsIconSmall;
 
-    // Called for "settings" in wallcmd.txt. Works on a pool thread: the panel may still be loading, so we look for its
-    // window for up to two seconds, and a busy Rainmeter must not hold up the main loop.
-    static void ShowSettingsInTaskbar()
+    // Called for "settings" in wallcmd.txt, and by the tray after it sends the bangs that open the panel. Works on a pool
+    // thread: the panel may still be loading, so we look for its window for up to two seconds, and a busy Rainmeter
+    // must not hold up the main loop. delayMs lets Rainmeter run bangs it was just sent first (its !ZPos 1 would
+    // otherwise land after us and leave the panel topmost).
+    static void ShowSettingsInTaskbar() { ShowSettingsInTaskbar(0); }
+    static void ShowSettingsInTaskbar(int delayMs)
     {
         ThreadPool.QueueUserWorkItem(delegate
         {
             try
             {
+                if (delayMs > 0) Thread.Sleep(delayMs);
                 IntPtr h = IntPtr.Zero;
                 for (int i = 0; i < 20 && h == IntPtr.Zero; i++)
                 {
@@ -92,6 +97,11 @@ static partial class Loopscape
         IntPtr HWND_NOTOPMOST = new IntPtr(-2);
         const uint WM_SETTEXT = 0x000C, WM_SETICON = 0x0080, SMTO_ABORTIFHUNG = 0x2;
         IntPtr result;
+
+        // As an app window the panel can be minimized (Win+D, or a click on its taskbar button), and Rainmeter can't
+        // bring a minimized skin back. Restore it, without taking the focus.
+        const int SW_SHOWNOACTIVATE = 4;
+        if (IsIconic(h)) ShowWindow(h, SW_SHOWNOACTIVATE);
 
         // An app window gets a taskbar button and an Alt+Tab entry; a tool window gets neither. Only these two bits
         // change, so Rainmeter's own styles (layered, click-through, ...) stay as they are.
