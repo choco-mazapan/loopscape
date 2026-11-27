@@ -20,11 +20,13 @@ static partial class Loopscape
     static string Playing
     {
         get { return playing; }
-        set { playing = value; PublishStyle(value, publishFadeMs); publishFadeMs = 0; }
+        set { playing = value; if (!holdPublish) PublishStyle(value, 0); }
     }
-    // Length of the crossfade that is about to show the new style (0 = it appears at once). Written as the second line
-    // of wallstyle.txt ("fade=<ms>") so the widgets fade out, move while the wallpapers blend, and fade back in.
-    static int publishFadeMs;
+    // Set while a crossfade is being prepared: SwitchTo publishes the style itself once the blend is on screen, with
+    // the crossfade's length as the second line of wallstyle.txt ("fade=<ms>"), so the widgets fade out, move at the
+    // crossfade's midpoint and fade back in. Publishing it when the next file starts loading made the widgets move
+    // before the wallpaper visibly changed, because loading a video can take a second or more.
+    static bool holdPublish;
     static string lastPublished;
     static void PublishStyle(string video, int fadeMs)
     {
