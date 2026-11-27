@@ -1,5 +1,5 @@
 ; Loopscape installer (Inno Setup 6). Per-user: no administrator prompt (except Rainmeter's own installer,
-; if the user ticks it). Build: .\build\stage.ps1, then  iscc /DAppVersion=1.0.0 installer\Loopscape.iss
+; if the user ticks it). Build: .\build\stage.ps1, then  iscc /DAppVersion=1.1.0 installer\Loopscape.iss
 ;
 ; What it changes (README "What it changes on your PC"):
 ;   %LOCALAPPDATA%\Programs\Loopscape     the program (Loopscape.exe, mpv, styles.json)
@@ -9,8 +9,10 @@
 ;   Settings > Apps entry with an uninstaller
 
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.1.0"
 #endif
+; The file's version resource takes only numbers, so a suffix such as "-dev" or "-rc1" is cut off there
+#define FileVersion Pos("-", AppVersion) > 0 ? Copy(AppVersion, 1, Pos("-", AppVersion) - 1) : AppVersion
 #define Stage "..\build\stage"
 #define RunKey "Software\Microsoft\Windows\CurrentVersion\Run"
 
@@ -22,7 +24,7 @@ AppVerName=Loopscape {#AppVersion}
 AppPublisher=choco-mazapan
 AppPublisherURL=https://github.com/choco-mazapan/loopscape
 AppSupportURL=https://github.com/choco-mazapan/loopscape/issues
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#FileVersion}
 PrivilegesRequired=lowest
 DefaultDirName={autopf}\Loopscape
 DisableDirPage=yes

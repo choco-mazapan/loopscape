@@ -16,7 +16,7 @@ Loopscape is a live wallpaper for Windows 10 and 11. It plays looping animated l
 
 Loopscape works on 64-bit Windows 10 and 11.
 
-1. Download `Loopscape-Setup-<version>.exe` from [Releases](https://github.com/choco-mazapan/loopscape/releases).
+1. Download `Loopscape-Setup-<version>.exe` from the [newest release](https://github.com/choco-mazapan/loopscape/releases/latest). If you already have Loopscape, the new installer goes over it and keeps your settings and videos.
 2. Run it. It installs for your user only, so there's no administrator prompt (except Rainmeter's own installer, if you tick it).
 3. Type your city for the weather, and leave **Install Rainmeter** ticked if you don't have it. Rainmeter is the free, open-source program that draws the widgets.
 
@@ -108,7 +108,7 @@ Click the Loopscape tray icon to open the widgets' Settings panel, or right-clic
 
 *Update Loopscape* is in the tray menu and in Settings → Look.
 
-- If you installed with the setup program, it opens the [Releases](https://github.com/choco-mazapan/loopscape/releases) page so you can download the newest installer.
+- If you installed with the setup program, it opens the [newest release](https://github.com/choco-mazapan/loopscape/releases/latest) so you can download its installer.
 - If you run Loopscape from a git clone of this repository (see [Building from source](#building-from-source)), it opens a window that lists the new changes to Loopscape and its widgets, with this PC's version and the new one. **Update** turns on once GitHub reports that the new version passed its build checks, which takes a few minutes after a change. Press it to get them: a progress bar follows the rebuild, and the window then shows what was updated. Changes only to files Loopscape doesn't use, such as this README, the screenshots or the installer, aren't listed and don't count as an update.
 
   After it has checked once, the tray menu and Settings → Look show the result: *Loopscape is up to date* with this PC's version, or how many new changes are waiting. The result is from the last time you chose *Update Loopscape*; Loopscape doesn't check by itself.
@@ -185,10 +185,13 @@ HEVC and AV1 files are kept only if they're at least 15% smaller than H.264 and 
 
 ### Make a release
 
-1. Run `build\make-styles-release.ps1`.
-2. Upload `build\styles-release` to the `styles-v1` release.
+If the styles changed (new or re-rendered videos or stills):
+
+1. Run `build\make-styles-release.ps1 -Tag styles-v<n>` with a new tag.
+2. Make a `styles-v<n>` release from `build\styles-release` with **Set as the latest release** turned off (`gh release create styles-v<n> build\styles-release\* --latest=false`), so the README's download link keeps pointing at the installer.
 3. Commit `installer\styles.json` and `installer\styles-SHA256SUMS.txt`.
-4. Push a `v*` tag. The [release workflow](.github/workflows/release.yml) builds the installer and makes a draft release.
+
+Then push a `v*` tag on `main`, such as `git tag v1.1.0 && git push origin v1.1.0`. The [release workflow](.github/workflows/release.yml) builds the installer and makes a draft release with it, `SHA256SUMS.txt` and notes listing the pull requests since the previous `v*` release. Look it over and publish it; it then becomes the latest release.
 
 ## License
 
