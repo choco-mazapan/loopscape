@@ -1,0 +1,117 @@
+﻿using System;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+
+static partial class Loopscape
+{
+    // ---------------- Taskbar button for the Settings panel ----------------
+    // The Settings panel is a Rainmeter skin, and Rainmeter makes every skin window a tool window, which Windows keeps
+    // off the taskbar and out of Alt+Tab. Rainmeter has no setting for that, so each time the panel loads it asks us for
+    // a button ("settings" in wallcmd.txt, see settings.lua Initialize). We make its window an app window, add it to the
+    // taskbar and give it our name and icon. Without Loopscape running, the panel simply has no button.
+    const string SettingsTitle = "Loopscape Settings";
+    // Rainmeter titles a skin window with the path of its .ini file: ...\Skins\Loopscape\Settings\Settings.ini
+    const string SettingsIniTail = @"\Loopscape\Settings\Settings.ini";
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetWindowText")]
+    static extern int GetWindowTitle(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int index);
+    [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int index, int value);
+    [DllImport("user32.dll", EntryPoint = "SetWindowPos")]
+    static extern bool SetWindowPosition(IntPtr h, IntPtr after, int x, int y, int w, int hgt, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageTimeout")]
+    static extern IntPtr SendTextTimeout(IntPtr h, uint m, IntPtr w, string l, uint f, uint t, out IntPtr r);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern uint ExtractIconEx(string file, int index, out IntPtr large, out IntPtr small, uint count);
+
+    [ComImport, Guid("56FDF342-FD6D-11d0-958A-006097C9A090"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface ITaskbarList
+    {
+        void HrInit();
+        void AddTab(IntPtr h);
+        void DeleteTab(IntPtr h);
+        void ActivateTab(IntPtr h);
+        void SetActiveAlt(IntPtr h);
+    }
+    [ComImport, Guid("56FDF344-FD6D-11d0-958A-006097C9A090")] class TaskbarList { }
+
+    // Loaded once and never freed: the panel's window keeps drawing them for as long as it is open
+    static IntPtr settingsIconBig, settingsIconSmall;
+
+    // Called for "settings" in wallcmd.txt. Works on a pool thread: the panel may still be loading, so we look for its
+    // window for up to two seconds, and a busy Rainmeter must not hold up the main loop.
+    static void ShowSettingsInTaskbar()
+    {
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+            try
+            {
+                IntPtr h = IntPtr.Zero;
+                for (int i = 0; i < 20 && h == IntPtr.Zero; i++)
+                {
+                    h = FindSettingsWindow();
+                    if (h == IntPtr.Zero) Thread.Sleep(100);
+                }
+                if (h == IntPtr.Zero) { Log("settings panel: window not found, no taskbar button"); return; }
+                GiveTaskbarButton(h);
+            }
+            catch (Exception e) { Log("settings panel taskbar button: " + e.Message); }
+        });
+    }
+
+    static IntPtr FindSettingsWindow()
+    {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows(delegate (IntPtr h, IntPtr l)
+        {
+            if (Cls(h) != "RainmeterMeterWindow") return true;
+            var t = new StringBuilder(512);
+            GetWindowTitle(h, t, 512);
+            string title = t.ToString();
+            // (already renamed if the panel was refreshed and Rainmeter kept the title we gave it)
+            if (title == SettingsTitle || title.EndsWith(SettingsIniTail, StringComparison.OrdinalIgnoreCase))
+            {
+                found = h;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    static void GiveTaskbarButton(IntPtr h)
+    {
+        const int GWL_EXSTYLE = -20;
+        const int WS_EX_TOOLWINDOW = 0x80, WS_EX_APPWINDOW = 0x40000;
+        const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20;
+        const uint WM_SETTEXT = 0x000C, WM_SETICON = 0x0080, SMTO_ABORTIFHUNG = 0x2;
+        IntPtr result;
+
+        // An app window gets a taskbar button and an Alt+Tab entry; a tool window gets neither. Only these two bits
+        // change, so Rainmeter's own styles (layered, click-through, ...) stay as they are.
+        int ex = GetWindowLong(h, GWL_EXSTYLE);
+        int want = (ex & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW;
+        if (want != ex)
+        {
+            SetWindowLong(h, GWL_EXSTYLE, want);
+            SetWindowPosition(h, IntPtr.Zero, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        }
+
+        // The taskbar reads the title (otherwise the path of Settings.ini) and the icon (otherwise none). The messages
+        // go to Rainmeter's process, so each one gives up after half a second if Rainmeter is busy.
+        SendTextTimeout(h, WM_SETTEXT, IntPtr.Zero, SettingsTitle, SMTO_ABORTIFHUNG, 500, out result);
+        if (settingsIconBig == IntPtr.Zero)
+            ExtractIconEx(Assembly.GetExecutingAssembly().Location, 0, out settingsIconBig, out settingsIconSmall, 1);
+        if (settingsIconBig != IntPtr.Zero) SendMessageTimeout(h, WM_SETICON, (IntPtr)1 /*ICON_BIG*/, settingsIconBig, SMTO_ABORTIFHUNG, 500, out result);
+        if (settingsIconSmall != IntPtr.Zero) SendMessageTimeout(h, WM_SETICON, IntPtr.Zero /*ICON_SMALL*/, settingsIconSmall, SMTO_ABORTIFHUNG, 500, out result);
+
+        // The taskbar only looks at a window's styles when it is shown, and the panel is already on screen: add the
+        // button now instead of hiding and showing the window (which would make it flicker).
+        var list = (ITaskbarList)new TaskbarList();
+        try { list.HrInit(); list.AddTab(h); }
+        finally { Marshal.ReleaseComObject(list); }
+        Log("settings panel: taskbar button added");
+    }
+}

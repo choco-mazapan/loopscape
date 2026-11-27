@@ -83,7 +83,7 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and No
 
 ## Using Loopscape
 
-Click the Loopscape tray icon to open the widgets' Settings panel, or right-click it for the menu.
+Click the Loopscape tray icon to open the widgets' Settings panel, or right-click it for the menu. While the panel is open it has its own taskbar button and shows up in Alt+Tab.
 
 ### Pick and rotate styles
 
