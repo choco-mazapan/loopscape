@@ -2,7 +2,7 @@
 #   - regenerates the settings panel (rainmeter\gen-settings-ini.ps1) and rebuilds WeatherFetch.exe / WifiInfo.exe if
 #     their source changed
 #   - copies the Rainmeter skin to Documents\Rainmeter\Skins\Loopscape, keeping what lives only there:
-#       Settings.inc values (new keys are added), widget layout (SnapAttach, SnapSize, View), the panel's last tab (Tab),
+#       Settings.inc values (new keys are added), widget layout (SnapAttach, SnapPlace, SnapSize, View), the panel's last tab (Tab),
 #       and the bundled fonts (Rainmeter locks them; copied only if missing)
 #   - rebuilds and restarts Loopscape if its source (wallpaper\Loopscape\) changed (or with -RebuildLoopscape); new Loopscape.ini keys are added
 #   - refreshes the widgets
@@ -16,7 +16,7 @@ $skinSrc = Join-Path $root 'rainmeter\Loopscape'
 $skinDst = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Rainmeter\Skins\Loopscape'
 $lwDir   = Join-Path $env:USERPROFILE 'Loopscape'
 $rm      = "$env:ProgramFiles\Rainmeter\Rainmeter.exe"
-$runtimeKeys = 'SnapAttach', 'SnapSize', 'View', 'Tab'     # written by the skins at runtime: the live value wins
+$runtimeKeys = 'SnapAttach', 'SnapPlace', 'SnapSize', 'View', 'Tab'     # written by the skins at runtime: the live value wins
 $changed = New-Object System.Collections.Generic.List[string]
 function Say($m) { if ($DryRun) { "[dry run] $m" } else { $m } }
 function Step($percent, $what) { if ($Progress) { "progress $percent $what" } }

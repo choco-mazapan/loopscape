@@ -18,8 +18,10 @@ static partial class Loopscape
     // checks for updates in the background.
     // With a git clone of the source (sourceFolder= in Loopscape.ini, which sync.ps1 fills in) it starts the clone's
     // update.ps1, which lists the new changes, and after you confirm pulls them and runs sync.ps1 with a progress bar.
-    // sync.ps1 may restart this program midway, so update.ps1 runs in its own process. Without a clone it opens the Releases page to get the newest installer.
-    const string ReleasesUrl = "https://github.com/choco-mazapan/loopscape/releases";
+    // sync.ps1 may restart this program midway, so update.ps1 runs in its own process.
+    // A copy installed with the setup program gets the update window in InstallerUpdate.cs, which downloads, checks and
+    // runs the newest installer. Any other copy opens the newest release, which has the installer.
+    const string ReleasesUrl = "https://github.com/choco-mazapan/loopscape/releases/latest";
     const string UpdateMutexName = "Local\\LoopscapeUpdate";   // held by update.ps1 while it runs
     static string UpdateScript()
     {
@@ -56,7 +58,8 @@ static partial class Loopscape
             if (d.TryGetValue("version", out v)) info.Version = v;
             if (d.TryGetValue("latest", out v)) info.Latest = v;
             if (d.TryGetValue("count", out v)) int.TryParse(v, out info.Count);
-            if (!info.UpToDate && info.Count <= 0) return null;
+            // available: a clone counts new commits, an installed copy names the new release
+            if (!info.UpToDate && info.Count <= 0 && info.Latest.Length == 0) return null;
             DateTime when;
             if (d.TryGetValue("checked", out v) && DateTime.TryParseExact(v, "yyyy-MM-dd HH:mm",
                     System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out when))
@@ -86,7 +89,14 @@ static partial class Loopscape
             string script = UpdateScript();
             if (script == null)
             {
-                Log(from + ": update: no sourceFolder, opening the Releases page");
+                Version installedVer = InstalledVersion();
+                if (installedVer != null)
+                {
+                    Log(from + ": update: installed copy " + installedVer + ", checking the releases");
+                    ShowInstallerUpdate(installedVer);
+                    return;
+                }
+                Log(from + ": update: no sourceFolder and not installed by the setup program, opening the newest release");
                 Process.Start(ReleasesUrl);
                 return;
             }

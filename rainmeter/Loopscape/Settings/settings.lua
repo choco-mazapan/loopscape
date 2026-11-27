@@ -35,19 +35,50 @@ end
 --   anyOn = value   a two-option row whose stored value can also be one of several older ones: anything but the
 --                   other option counts as this one (Text colour used to have six modes)
 --   custom = fn     the value isn't in the list (a typed number): fn(value) gives its label
+--   compound        the row sets more than one variable: read() gives the value to show, write(value) the
+--                   { variable = value } to store
 local ROWS = {
   { 'MatchWidths',   'MeterVal1', { { '1', 'On' }, { '0', 'Off' } } },
-  { 'SnapEnabled',   'MeterVal2', { { '1', 'On' }, { '0', 'Off' } } },
+  -- read by snap.lua: whether a drop snaps, and how close to a target it has to land (SnapEnabled + SnapRadius)
+  { 'SnapEnabled',   'MeterVal2', { { '0', 'Off' }, { '24', 'Within 24 px' }, { '48', 'Within 48 px' }, { '96', 'Within 96 px' } },
+    custom = function(v) return 'Within ' .. v .. ' px' end,
+    compound = {
+      read = function()
+        if SKIN:GetVariable('SnapEnabled', '1') == '0' then return '0' end
+        local r = SKIN:GetVariable('SnapRadius', '')
+        return r ~= '' and r or '48'
+      end,
+      write = function(v) if v == '0' then return { SnapEnabled = '0' } end; return { SnapEnabled = '1', SnapRadius = v } end,
+    } },
+  -- read by snap.lua: drops that land near no target move to a grid of this spacing (SnapGrid + SnapGridSize)
+  { 'SnapGrid',      'MeterVal20', { { '0', 'Off' }, { '12', '12 px' }, { '24', '24 px' }, { '48', '48 px' } },
+    custom = function(v) return v .. ' px' end,
+    compound = {
+      read = function()
+        if SKIN:GetVariable('SnapGrid', '1') == '0' then return '0' end
+        local g = SKIN:GetVariable('SnapGridSize', '')
+        return g ~= '' and g or '24'
+      end,
+      write = function(v) if v == '0' then return { SnapGrid = '0' } end; return { SnapGrid = '1', SnapGridSize = v } end,
+    } },
   -- read by snap.lua: how far the three bottom snap spots sit above the bottom of the screen. "Custom" opens the text
   -- box for any number of pixels.
   { 'SnapBottomMargin', 'MeterVal19', { { '76', 'Above taskbar (76 px)' }, { '28', 'Over taskbar (28 px)' },
                                         { '8', 'Screen edge (8 px)' }, { '#custom', 'Custom height...' } },
     custom = function(v) return v .. ' px' end },
+  -- read by snap.lua: keep the top snap spots (and dragged widgets) below a bar along the top of the screen
+  { 'TopBarBuffer',  'MeterVal29', { { '1', 'On' }, { '0', 'Off' } }, '0' },
   { 'WeatherUnit',   'MeterVal3', { { 'fahrenheit', '[\\x00B0]F' }, { 'celsius', '[\\x00B0]C' } } },
   { 'WeatherLocation', 'MeterVal21', { { 'city', 'City' }, { 'windows', 'Windows location' } } },
   { 'PanelAlpha',    'MeterVal4', { { '0', 'Off' }, { '110', 'Light' }, { '150', 'Medium' }, { '200', 'Dark' } } },
   { 'TextEffect',    'MeterVal8', { { 'Shadow', 'Shadow' }, { 'Border', 'Outline' }, { 'None', 'None' } } },
   { 'TextPills',     'MeterVal10', { { '1', 'On' }, { '0', 'Off' } } },
+  -- read by the clock's weather.lua (Animate)
+  { 'AnimateWeather', 'MeterVal28', { { '1', 'On' }, { '0', 'Off' } }, '0' },
+  -- read by every widget through @Resources\Scale.inc: 0 = automatic (from the screen height), or a factor.
+  -- Initialize adds the automatic size to the Auto label
+  { 'WidgetScale',   'MeterVal27', { { '0', 'Auto' }, { '1', '100%' }, { '1.25', '125%' }, { '1.5', '150%' },
+                                     { '1.75', '175%' }, { '2', '200%' }, { '2.5', '250%' } }, '0' },
   -- read by snap.lua in each widget (see BOOST there)
   { 'TextBoost',     'MeterVal18', { { '0', 'Off' }, { '1', '1 Soft shadow' }, { '2', '2 Drop shadow' }, { '3', '3 Halo' },
                                      { '4', '4 Outline + halo' }, { '5', '5 Bold + outline' }, { '6', '6 Maximum' } } },
@@ -77,6 +108,7 @@ local ROWS = {
 -- clicks ignored. Row number n = its MeterLabelN / MeterHintN / MeterValN. The check gets the current value of a
 -- variable (with the row's default applied).
 local DIMMED = {
+  { n = 20, why = 'Snapping is off',                when = function(get) return get('SnapEnabled') == '0' end },
   { n = 22, why = 'Not used with Windows location', when = function(get) return get('WeatherLocation') == 'windows' end },
   { n = 10, why = 'Off while Panel darkness is on', when = function(get) return get('PanelAlpha') ~= '0' end },
   { n = 9,  why = 'Off while Panel darkness is on', when = function(get) return get('PanelAlpha') ~= '0' end },
@@ -111,6 +143,7 @@ local function row(var) for _, r in ipairs(ROWS) do if r[1] == var then return r
 -- A setting's value, with the row's default when Settings.inc doesn't have it, and older values folded into anyOn
 local function current(var)
   local r = row(var)
+  if r and r.compound then return r.compound.read() end
   local v = SKIN:GetVariable(var, '')
   if v == '' and r and r[4] then
     if type(r[4]) == 'function' then v = r[4]() else v = r[4] end
@@ -280,8 +313,8 @@ function ShowTab(name)
 end
 
 -- ---------- Update Loopscape row (Look tab): what update.ps1 last found, from %LOCALAPPDATA%\Loopscape\updatestatus.txt ----------
--- The file exists only for a Loopscape set up from a git clone, after Update Loopscape has run once; nothing checks
--- GitHub in the background. sync.ps1 deletes it when it installs another commit by hand.
+-- Update Loopscape writes it (update.ps1 for a git clone, Loopscape.exe's Updater.cs for an installed copy); nothing
+-- checks GitHub in the background. sync.ps1 deletes it when it installs another commit by hand.
 local lastUpdateText = nil
 
 local function readUpdateStatus()
@@ -318,6 +351,9 @@ local function showUpdate(force)
   elseif st.state == 'available' and (tonumber(st.count) or 0) > 0 then
     local n = tonumber(st.count)
     hint = n .. ' new change' .. (n == 1 and '' or 's') .. ' on GitHub' .. (day and (', checked ' .. day) or '')
+  elseif st.state == 'available' and (st.latest or '') ~= '' then
+    -- an installed copy: a new release rather than a count of commits
+    hint = 'Version ' .. st.latest .. ' is available' .. (day and (', checked ' .. day) or '')
   end
   local key = label .. '|' .. hint .. '|' .. button
   if key == lastUpdateText and not force then return end
@@ -331,8 +367,17 @@ local function showUpdate(force)
   end
 end
 
+-- The size Auto picks on this screen, worked out as Scale.inc does: the screen height over 1080, in steps of 0.25
+-- from 1 to 3 (1440p 125%, 4K 200%)
+local function autoScale()
+  local h = tonumber(SKIN:GetVariable('SCREENAREAHEIGHT', '1080')) or 1080
+  local f = math.floor(h * 4 / 1080 + 0.5) / 4
+  return math.max(1, math.min(3, f))
+end
+
 function Initialize()
   INC = SKIN:GetVariable('@') .. 'Settings.inc'
+  row('WidgetScale')[3][1][2] = 'Auto (' .. math.floor(autoScale() * 100 + 0.5) .. '%)'
   for _, d in ipairs(DIMMED) do
     local m = SKIN:GetMeter('MeterHint' .. d.n)
     HINTS[d.n] = m and m:GetOption('Text') or ''
@@ -397,6 +442,12 @@ local function apply(var, value)
       end
     end
     return
+  elseif var == 'WidgetScale' then
+    -- the widgets work their sizes out when they load (Scale.inc), so refresh the ones on screen. Each keeps its
+    -- snap spot: snap.lua places it again at its new size
+    local on = running()
+    for _, w in ipairs(WIDGETS) do if on(w) then SKIN:Bang('!Refresh', w) end end
+    return
   elseif var == 'TextColorMode' or var:match('^Wall') then
     -- read from Settings.inc by Loopscape, which watches the file and crossfades to a new style by itself
     -- (downloading it first if it isn't on this PC yet)
@@ -422,8 +473,11 @@ local function apply(var, value)
     if w == 'Loopscape\\Clock' then SKIN:Bang('!UpdateMeter', 'Pill_MeterAmPm', w) end
     SKIN:Bang('!Redraw', w)
   end
-  if var == 'SnapBottomMargin' then
-    -- move widgets parked on a bottom spot (and anything stacked on them) to the new height
+  if var == 'AnimateWeather' and on(CLOCK) then
+    SKIN:Bang('!CommandMeasure', 'MeasureWeather', 'Animate()', CLOCK)
+  end
+  if var == 'SnapBottomMargin' or var == 'TopBarBuffer' then
+    -- move widgets parked on a bottom (or top) spot, and anything stacked on them, to the new height
     for _, w in ipairs(shownWidgets) do SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Resnap()', w) end
   end
   local SUN, RAIN = 'Loopscape\\SunMoon', 'Loopscape\\Rain'
@@ -456,6 +510,14 @@ local function setValue(var, value)
   SKIN:Bang('!WriteKeyValue', 'Variables', var, value, INC)
   show()
   apply(var, value)
+end
+
+-- A row's choice: one variable, or several for a compound row
+local function setRow(r, value)
+  if not r.compound then setValue(r[1], value); return end
+  for k, v in pairs(r.compound.write(value)) do
+    if SKIN:GetVariable(k, '') ~= v then setValue(k, v) end
+  end
 end
 
 function PickTile(i)
@@ -628,7 +690,7 @@ local function openDropdown(r)
   openList(r[1], r[2], items, sel, function(i)
     local v = r[3][i] and r[3][i][1]
     if v == '#custom' then EditField('bottom')
-    elseif v then setValue(r[1], v) end
+    elseif v then setRow(r, v) end
   end)
 end
 
@@ -653,7 +715,7 @@ function Next(var)
   for i, opt in ipairs(opts) do
     if opt[1] == cur then nextValue = opts[(i % #opts) + 1][1] end
   end
-  setValue(var, nextValue)
+  setRow(r, nextValue)
 end
 
 -- ---------- profiles ----------
@@ -713,8 +775,18 @@ local function writeProfile(i, name)
   local inc = readIni(INC) or {}
   local lines = { '; Loopscape widget profile (Settings panel > Profiles). Load it from there.', '[Profile]',
                   'Name=' .. name, 'Saved=' .. savedStamp(), '', '[Settings]' }
+  inc.Variables = inc.Variables or {}
+  -- a Settings.inc kept from an older version lacks the settings added since; save their defaults (what the panel
+  -- shows), so loading this profile later puts them back instead of keeping whatever they were changed to
+  for _, r in ipairs(ROWS) do
+    if r[4] ~= nil and not r.compound and inc.Variables[r[1]] == nil then
+      local v = r[4]
+      if type(v) == 'function' then v = v() end
+      if type(v) == 'string' then inc.Variables[r[1]] = v end
+    end
+  end
   local keys = {}
-  for k in pairs(inc.Variables or {}) do keys[#keys + 1] = k end
+  for k in pairs(inc.Variables) do keys[#keys + 1] = k end
   table.sort(keys)
   for _, k in ipairs(keys) do lines[#lines + 1] = k .. '=' .. inc.Variables[k] end
   lines[#lines + 1] = ''

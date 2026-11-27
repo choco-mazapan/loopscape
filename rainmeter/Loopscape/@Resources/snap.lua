@@ -1,19 +1,26 @@
 -- Shared by the Loopscape widgets (via @Resources\Snap.inc).
 --
--- Snapping: after a widget is dragged and dropped it moves to the nearest free target:
+-- Snapping: when a widget is dropped within SnapRadius of a target, it moves into it. Targets are:
 --   * the 8 screen spots (corners, top/bottom centre, left/right middle); bottom spots leave room for the taskbar.
---     A spot that would overlap another Loopscape widget is not offered.
 --   * stack spots directly above / below each other widget, aligned to its left edge, right edge or centre
 --     depending on which side of the screen it sits.
--- Stacking: a widget dropped on a stack spot stays attached to the widget it sits on. If that widget moves or
+--   * spots beside each other widget, with the top corners or the bottom corners lined up.
+-- A target that would make any widget overlap another one, or go off screen, is not offered.
+-- Dropped farther from every target, the widget moves to the nearest point of a SnapGridSize grid (SnapGrid=1) or
+-- stays where it was dropped (SnapGrid=0).
+-- Stacking: a widget dropped on a stack or side spot stays attached to the widget it sits on. If that widget moves or
 -- changes size (e.g. weather loads), the attached one follows. Dragging the attached widget away detaches it.
+-- Groups: a widget and everything stacked on it (directly or through each other) move as one. While it is dragged
+-- or glides into its spot, the dragged widget moves the others itself ("carrying" them), and a target is only
+-- offered if the whole group fits there.
 --
--- Widgets share their position through variables: each one writes "x,y,w,h" into Peer_<name> of the others.
--- Rainmeter has no "drag finished" event, so a drop is detected as "position unchanged for DROP_SECS".
--- While dragging, the Loopscape\SnapGuides skin shows dashed outlines of all targets with the chosen one tinted.
+-- Widgets share their position through variables: each one writes its rect and stack info into Peer_<name> of the
+-- others. Rainmeter has no "drag finished" event, so a drop is detected as "position unchanged for DROP_SECS".
+-- While dragging, the Loopscape\SnapGuides skin shows dashed outlines of the targets near the widget and a tinted
+-- outline where it would land.
 --
 -- Tick rates (MeasureFastTick in each widget): 1 s when idle, 100 ms while the mouse is over the widget (to notice
--- a drag starting), 33 ms while it is being dragged, and 16 ms while it glides into its spot after a drop.
+-- a drag starting), and 16 ms while it is being dragged or glides into its spot after a drop.
 -- The faster rates only run while something is moving, so idle CPU use stays the same.
 
 -- Files shared with Loopscape.exe while it runs (what it plays, commands, colours) live in %LOCALAPPDATA%\Loopscape,
@@ -23,8 +30,12 @@ local STATE = (os.getenv('LOCALAPPDATA') or ((os.getenv('USERPROFILE') or '') ..
 local STILL_TICKS = 2      -- ticks a parked widget waits before re-aligning to its spot (PeerChanged, Resnap)
 local DROP_SECS = 0.16     -- how long a dragged widget must sit still to count as dropped
 local GLIDE_SECS = 0.15    -- how long the widget takes to slide from where it was dropped into its spot
+local BLOCKED_SECS = 1.5   -- how long a stacked widget waits with no room on either side before it moves elsewhere
+local NEWCOMER_SECS = 10   -- a widget that loaded this recently checks it isn't on top of each widget it hears from
+local CARRY_SECS = 150     -- a carried widget gives up waiting for the one carrying it after this long
 local GUIDES = 'Loopscape\\SnapGuides'
-local MAX_GUIDES = 12
+local MAX_GUIDES = 12      -- Guide1..11 show targets near the widget, Guide12 where it would land
+local LANDING = MAX_GUIDES
 
 -- MeasureFastTick action lists (see the widget .ini files)
 local TICK_DRAG, TICK_GLIDE = 4, 5
@@ -33,12 +44,16 @@ local me, peers = nil, {}
 local lastX, lastY, lastW, lastH = nil, nil, nil, nil
 local still, dragging, enabled = 0, false, true
 local movedAt = 0           -- os.clock() of the last tick on which the user's drag moved the widget
-local targets, target = {}, nil
-local attach = nil          -- { peer = 'Loopscape\\Clock', rel = 'above'|'below' }
+local targets = {}
+local attach = nil          -- { peer = 'Loopscape\\Clock', rel = 'above'|'below'|'leftT'|'leftB'|'rightT'|'rightB' }
+local place = nil           -- where a free-standing widget is parked: { spot = 'br' } or { hx, ox, vy, oy } (see freePlace)
 local recheck = nil         -- checking which widgets are still there (see PeerGone)
 local ringTicks = 0         -- ticks we've been part of a ring of stacked widgets
-local glide = nil           -- { fx, fy, tx, ty, start, atX, atY } while sliding into a spot after a drop
-local followers = false     -- whether another widget is stacked on us (checked when a drag starts)
+local glide = nil           -- { fx, fy, tx, ty, start, atX, atY, from, to } while sliding into a spot after a drop
+local drag = nil            -- { group, obstacles, free } while being dragged
+local carry = nil           -- { members, at } while we move the widgets stacked on us ourselves
+local carried, carriedAt = false, 0   -- another widget is moving us (we are stacked on it and it is being dragged)
+local blockedSince = nil    -- os.clock() since when our stack spot has had no room on either side
 
 local function fastTick(list, on)
   SKIN:Bang('!CommandMeasure', 'MeasureFastTick', (on and 'Execute ' or 'Stop ') .. list)
@@ -76,6 +91,15 @@ end
 local function num(name, default)
   return tonumber(SKIN:GetVariable(name, tostring(default))) or default
 end
+-- Widget size (Settings > Widgets > Widget size): #Scale# from Scale.inc, a formula such as (0>0 ? ... : ...). It only
+-- changes on a refresh, so it is read once.
+local scaleValue
+local function scale()
+  if not scaleValue then scaleValue = tonumber(SKIN:ParseFormula(SKIN:GetVariable('Scale', '1'))) or 1 end
+  return scaleValue
+end
+-- A distance in Snap.inc (margins, gaps), in pixels at the current widget size
+local function px(name, default) return math.floor(num(name, default) * scale() + 0.5) end
 local function key(config) return (config:gsub('[^%w]', '_')) end
 local function quoted(s) return '"' .. (s:gsub('\\', '\\\\')) .. '"' end
 
@@ -117,14 +141,17 @@ end
 -- loads the widgets one after another, and a widget listed as active may not have its script yet. A peer counts as
 -- live once it answers (its Peer_ variable is filled, see noticeAnswers) or says Hello itself.
 local HELLO_AFTER = 0.8
+local greeting = false    -- sayHello is running: the answers come in one by one, so wait for all of them
 local function sayHello()
   helloPending = false
   local act = activeConfigs()
+  greeting = true
   for _, p in ipairs(peers) do
     if not act or act[p:lower()] then
       SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Hello(' .. quoted(me) .. ')', p)
     end
   end
+  greeting = false
 end
 
 -- A peer that shared its position with us is running. (Its PeerChanged call can be dropped while our script is
@@ -161,14 +188,15 @@ local function screen()
   return num('SCREENAREAX', 0), num('SCREENAREAY', 0), num('SCREENAREAWIDTH', 1920), num('SCREENAREAHEIGHT', 1080)
 end
 
--- Other widgets' rectangles as last broadcast: { name = {x,y,w,h,attachedTo,naturalWidth} }
+-- Other widgets' rectangles as last broadcast:
+--   { name = { x, y, w, h, attachedTo, naturalWidth, rel, loadedMs } }
 local function peerRects(includeFollowers)
   local out, all = {}, {}
   for _, p in ipairs(peers) do
     local s = SKIN:GetVariable('Peer_' .. key(p), '')
-    -- "x,y,w,h,attachedTo,naturalWidth"
-    local x, y, w, h, att, nat = s:match('^(-?%d+),(-?%d+),(%d+),(%d+),?([^,]*),?(%d*)$')
-    local r = x and { tonumber(x), tonumber(y), tonumber(w), tonumber(h), att, tonumber(nat) }
+    -- "x,y,w,h,attachedTo,naturalWidth,rel,loadedMs" (older versions sent only the first six)
+    local x, y, w, h, att, nat, rel, ld = s:match('^(-?%d+),(-?%d+),(%d+),(%d+),?([^,]*),?(%d*),?(%a*),?(%d*)$')
+    local r = x and { tonumber(x), tonumber(y), tonumber(w), tonumber(h), att, tonumber(nat), rel, tonumber(ld) }
     -- while checking who's still there, a widget that hasn't answered yet counts as where it was
     if not r and recheck and recheck.old then r = recheck.old[p] end
     if r then all[p] = r end
@@ -195,57 +223,264 @@ local function followsMe(p)
   return false
 end
 
-local function overlaps(ax, ay, aw, ah, r)
-  local pad = 4
+-- Space between stacked widgets. With the panel tint off their padding is invisible, so they overlap a little on
+-- purpose (SnapGapClear is negative) to bring the text lines together.
+local function gap()
+  return (num('PanelAlpha', 0) == 0) and px('SnapGapClear', -16) or px('SnapGap', 12)
+end
+
+-- Whether rect a (x, y, w, h) covers rect r. Overlap up to the stacking overlap above (plus a few pixels) doesn't
+-- count, so stacked widgets aren't obstacles to each other.
+local function hits(ax, ay, aw, ah, r)
+  local pad = 4 + math.max(0, -gap())
   return ax < r[1] + r[3] - pad and ax + aw > r[1] + pad and ay < r[2] + r[4] - pad and ay + ah > r[2] + pad
 end
 
--- Where this widget goes when stacked above/below peer rect r
-local function stackPos(r, rel, w, h)
+-- Which screen column (0 left, 1 centre, 2 right) a rect's centre is in
+local function columnOf(x, w)
   local sx, _, sw, _ = screen()
-  local gap = (num('PanelAlpha', 0) == 0) and num('SnapGapClear', -16) or num('SnapGap', 12)
-  local cx = r[1] + r[3] / 2 - sx
-  local x
-  if cx < sw / 3 then x = r[1]                           -- left column: align left edges
-  elseif cx > sw * 2 / 3 then x = r[1] + r[3] - w        -- right column: align right edges
-  else x = r[1] + math.floor((r[3] - w) / 2) end         -- middle: centre on it
-  local y = (rel == 'above') and (r[2] - h - gap) or (r[2] + r[4] + gap)
+  local cx = x + w / 2 - sx
+  return (cx < sw / 3) and 0 or ((cx > sw * 2 / 3) and 2 or 1)
+end
+
+-- Where a widget of size w x h goes when attached to peer rect r:
+--   above / below: aligned to r's left edge, right edge or centre, depending on r's screen column
+--   leftT / leftB / rightT / rightB: beside r, on its left or right, with top (T) or bottom (B) edges lined up
+local VERTICAL = { above = true, below = true }
+local OPPOSITE = { above = 'below', below = 'above', leftT = 'rightT', rightT = 'leftT', leftB = 'rightB', rightB = 'leftB' }
+local RELS = { 'above', 'below', 'leftT', 'leftB', 'rightT', 'rightB' }
+local function stackPos(r, rel, w, h)
+  local g = gap()
+  if VERTICAL[rel] then
+    local col, x = columnOf(r[1], r[3])
+    if col == 0 then x = r[1]                               -- left column: align left edges
+    elseif col == 2 then x = r[1] + r[3] - w                -- right column: align right edges
+    else x = r[1] + math.floor((r[3] - w) / 2) end          -- middle: centre on it
+    local y = (rel == 'above') and (r[2] - h - g) or (r[2] + r[4] + g)
+    return x, y
+  end
+  local x = (rel:sub(1, 1) == 'l') and (r[1] - w - g) or (r[1] + r[3] + g)
+  local y = (rel:sub(-1) == 'T') and r[2] or (r[2] + r[4] - h)
   return x, y
 end
 
--- All snap targets for a widget of size w x h
-local function buildTargets(w, h)
-  local sx, sy, sw, sh = screen()
-  local m, mb = num('SnapMargin', 28), num('SnapBottomMargin', 76)
-  local rects = peerRects()
-  local list = {}
-  local left, centerX, right = sx + m, sx + math.floor((sw - w) / 2), sx + sw - w - m
-  local top, middle, bottom = sy + m, sy + math.floor((sh - h) / 2), sy + sh - h - mb
-  for _, a in ipairs({ { left, top }, { centerX, top }, { right, top }, { left, middle }, { right, middle },
-                        { left, bottom }, { centerX, bottom }, { right, bottom } }) do
-    local free = true
-    for _, r in pairs(rects) do if overlaps(a[1], a[2], w, h, r) then free = false end end
-    if free then list[#list + 1] = { x = a[1], y = a[2] } end
+-- ---------- groups: a widget and the widgets stacked on it ----------
+-- members are listed parents first: { name, dx, dy, w, h, parent, rel } with dx, dy the offset from us.
+-- box = { left, top, right, bottom } of the whole group, relative to our top-left corner.
+-- at = { name = { x, y } } overrides the broadcast positions (for widgets we are carrying, which don't broadcast).
+local function groupOf(x, y, w, h, at)
+  local rects = peerRects(true)
+  local members, box = {}, { 0, 0, w, h }
+  local queue, qi, seen = { me }, 1, { [me] = true }
+  while qi <= #queue do
+    local parent = queue[qi]; qi = qi + 1
+    for _, p in ipairs(peers) do   -- in SnapPeers order, so the layout is the same every time
+      local r = rects[p]
+      if r and not seen[p] and r[5] == parent then
+        seen[p] = true; queue[#queue + 1] = p
+        local px, py = r[1], r[2]
+        if at and at[p] then px, py = at[p][1], at[p][2] end
+        local dx, dy = px - x, py - y
+        members[#members + 1] = { name = p, dx = dx, dy = dy, w = r[3], h = r[4], parent = parent, rel = r[7] or '' }
+        box[1], box[2] = math.min(box[1], dx), math.min(box[2], dy)
+        box[3], box[4] = math.max(box[3], dx + r[3]), math.max(box[4], dy + r[4])
+      end
+    end
   end
-  for p, r in pairs(rects) do
-    for _, rel in ipairs({ 'above', 'below' }) do
+  return { members = members, box = box }
+end
+
+-- Where every member goes if we are at x, y: each one where its own stacking rule puts it (see the attached branch
+-- in Update), so the group lands exactly as it will settle. Returns { name = { x, y, w, h } }, us included.
+local function layoutGroup(group, x, y, w, h)
+  local pos = { [me] = { x, y, w, h } }
+  for _, m in ipairs(group.members) do
+    local pr = pos[m.parent]
+    if pr and OPPOSITE[m.rel] then
+      local mx, my = stackPos(pr, m.rel, m.w, m.h)
+      pos[m.name] = { mx, my, m.w, m.h }
+    else
+      pos[m.name] = { x + m.dx, y + m.dy, m.w, m.h }
+    end
+  end
+  return pos
+end
+
+-- The box of the group as layoutGroup places it with us at x, y, relative to our top-left corner. (The members'
+-- alignment depends on the screen column, so this can differ a little from group.box, which is where they are now.)
+local function layoutBox(group, x, y, w, h)
+  local l, t, r, b = 0, 0, w, h
+  for _, p in pairs(layoutGroup(group, x, y, w, h)) do
+    l, t = math.min(l, p[1] - x), math.min(t, p[2] - y)
+    r, b = math.max(r, p[1] + p[3] - x), math.max(b, p[2] + p[4] - y)
+  end
+  return { l, t, r, b }
+end
+
+-- Whether the group fits with us at x, y: every member on screen between top and bottom, and clear of every
+-- obstacle. Returns true and the layout, or false and the obstacle in the way (nil when it is the screen edge).
+local function groupFits(group, x, y, w, h, obstacles, top, bottom)
+  local sx, _, sw, _ = screen()
+  local pos = layoutGroup(group, x, y, w, h)
+  for _, r in pairs(pos) do
+    if r[1] < sx or r[1] + r[3] > sx + sw or r[2] < top or r[2] + r[4] > bottom then return false, nil end
+    for p, o in pairs(obstacles) do if hits(r[1], r[2], r[3], r[4], o) then return false, p end end
+  end
+  return true, pos
+end
+
+-- Room kept free for a bar along the top of the screen (Settings: "Room for a top bar", TopBarBuffer=1): the height
+-- the bar reserves from the desktop (the work area starts below it), or TopBarHeight for a bar that reserves none.
+-- 0 while the setting is off.
+local function topBar()
+  if num('TopBarBuffer', 0) ~= 1 then return 0 end
+  local reserved = num('WORKAREAY', 0) - num('SCREENAREAY', 0)
+  if reserved > 0 and reserved < num('SCREENAREAHEIGHT', 1080) / 2 then return reserved end
+  return math.max(0, num('TopBarHeight', 28))
+end
+
+-- How high and low a widget may go: near the top, and above the bottom spots' margin (which keeps the taskbar clear).
+-- The same limits hold for snap targets, free placement and stacked widgets, so a group placed anywhere also fits
+-- by its own members' rules.
+local function snapLimits()
+  local _, sy, _, sh = screen()
+  return sy + topBar() + math.floor(px('SnapMargin', 28) / 2), sy + sh - num('SnapBottomMargin', 76)
+end
+
+-- Our position when the group's box sits on screen spot name (tl tc tr / ml mr / bl bc br)
+local SPOTS = { 'tl', 'tc', 'tr', 'ml', 'mr', 'bl', 'bc', 'br' }
+local function spotPos(name, box)
+  local sx, sy, sw, sh = screen()
+  local m, mb = px('SnapMargin', 28), num('SnapBottomMargin', 76)
+  local bw, bh = box[3] - box[1], box[4] - box[2]
+  local col, row = name:sub(2, 2), name:sub(1, 1)
+  local bx = (col == 'l') and sx + m or ((col == 'r') and sx + sw - bw - m or sx + math.floor((sw - bw) / 2))
+  local by = (row == 't') and sy + topBar() + m or ((row == 'b') and sy + sh - bh - mb or sy + math.floor((sh - bh) / 2))
+  return bx - box[1], by - box[2]
+end
+
+-- All snap targets for our group: { x, y, spot } or { x, y, peer, rel }
+local function buildTargets(group, w, h, obstacles)
+  obstacles = obstacles or peerRects()
+  local top, bottom = snapLimits()
+  local list = {}
+  local function add(t, x, y)
+    if groupFits(group, x, y, w, h, obstacles, top, bottom) then t.x, t.y = x, y; list[#list + 1] = t end
+  end
+  for _, s in ipairs(SPOTS) do
+    local x, y = spotPos(s, group.box)
+    x, y = spotPos(s, layoutBox(group, x, y, w, h))
+    add({ spot = s }, x, y)
+  end
+  for p, r in pairs(obstacles) do
+    for _, rel in ipairs(RELS) do
       local x, y = stackPos(r, rel, w, h)
-      -- must fit on screen (bottom keeps the taskbar margin) and not collide with any other widget
-      local ok = x >= sx and x + w <= sx + sw and y >= sy + m / 2 and y + h <= sy + sh - mb
-      for p2, r2 in pairs(rects) do if p2 ~= p and overlaps(x, y, w, h, r2) then ok = false end end
-      if ok then list[#list + 1] = { x = x, y = y, peer = p, rel = rel } end
+      add({ peer = p, rel = rel }, x, y)
     end
   end
   return list
 end
 
-local function nearestTarget(x, y)
-  local best, bestD, bestI
-  for i, t in ipairs(targets) do
+local function nearestTarget(x, y, list)
+  local best, bestD
+  for _, t in ipairs(list or targets) do
     local d = (t.x - x) ^ 2 + (t.y - y) ^ 2
-    if not bestD or d < bestD then best, bestD, bestI = t, d, i end
+    if not bestD or d < bestD then best, bestD = t, d end
   end
-  return best, bestI
+  return best, bestD
+end
+
+-- Where a drop at x, y lands: the nearest target within SnapRadius; otherwise the nearest grid point (or x, y with
+-- the grid off), kept on screen; if the group doesn't fit there, the nearest target after all.
+local function chooseTarget(x, y, w, h)
+  local best, d = nearestTarget(x, y)
+  local radius = num('SnapRadius', 48)
+  if best and d <= radius * radius then return best end
+  local sx, sy, sw, sh = screen()
+  local fx, fy = x, y
+  if num('SnapGrid', 1) == 1 then
+    -- the grid starts at the screen margin, so it lines up with the corner spots
+    local g, m = math.max(4, num('SnapGridSize', 24)), px('SnapMargin', 28)
+    fx = sx + m + math.floor((x - sx - m) / g + 0.5) * g
+    local gy = sy + topBar() + m
+    fy = gy + math.floor((y - gy) / g + 0.5) * g
+  end
+  local box = layoutBox(drag.group, fx, fy, w, h)
+  local top, bottom = snapLimits()
+  fx = math.max(sx - box[1], math.min(fx, sx + sw - box[3]))
+  fy = math.max(top - box[2], math.min(fy, bottom - box[4]))
+  -- (the same free spot as on the last tick: no need to check it again)
+  local f = drag.free
+  if not (f and f.x == fx and f.y == fy) then
+    f = { x = fx, y = fy, free = true }
+    f.ok = groupFits(drag.group, fx, fy, w, h, drag.obstacles, top, bottom)
+    drag.free = f
+  end
+  if f.ok then return f end
+  return best
+end
+
+-- ---------- where a free-standing widget is parked ----------
+-- A screen spot is remembered by name. Anywhere else, the group's box is remembered by its distance from the screen
+-- edges it is nearest to (hx: L, C or R; vy: T, M or B), so a widget on the right or at the bottom grows away from
+-- that edge, like one on a spot. Saved as SnapPlace in the skin's own ini ("spot:br" or "free:R,40,B,120").
+local function freePlace(x, y, box)
+  local sx, sy, sw, sh = screen()
+  local bx, by, bw, bh = x + box[1], y + box[2], box[3] - box[1], box[4] - box[2]
+  local p = {}
+  local col = columnOf(bx, bw)
+  if col == 0 then p.hx, p.ox = 'L', bx - sx
+  elseif col == 2 then p.hx, p.ox = 'R', sx + sw - (bx + bw)
+  else p.hx, p.ox = 'C', math.floor(bx + bw / 2 - (sx + sw / 2) + 0.5) end
+  local cy = by + bh / 2 - sy
+  if cy < sh / 3 then p.vy, p.oy = 'T', by - sy
+  elseif cy > sh * 2 / 3 then p.vy, p.oy = 'B', sy + sh - (by + bh)
+  else p.vy, p.oy = 'M', math.floor(by + bh / 2 - (sy + sh / 2) + 0.5) end
+  return p
+end
+
+local function placePos(p, box)
+  if p.spot then return spotPos(p.spot, box) end
+  local sx, sy, sw, sh = screen()
+  local bw, bh = box[3] - box[1], box[4] - box[2]
+  local bx = (p.hx == 'L') and sx + p.ox or ((p.hx == 'R') and sx + sw - p.ox - bw or math.floor(sx + sw / 2 + p.ox - bw / 2))
+  local by = (p.vy == 'T') and sy + p.oy or ((p.vy == 'B') and sy + sh - p.oy - bh or math.floor(sy + sh / 2 + p.oy - bh / 2))
+  -- not up under a top bar (the place itself is kept, so turning "Room for a top bar" off puts the widget back)
+  if topBar() > 0 then
+    local top = snapLimits()
+    if by < top then by = top end
+  end
+  return bx - box[1], by - box[2]
+end
+
+local function savePlace()
+  local s = ''
+  if place and place.spot then s = 'spot:' .. place.spot
+  elseif place then s = string.format('free:%s,%d,%s,%d', place.hx, place.ox, place.vy, place.oy) end
+  SKIN:Bang('!WriteKeyValue', 'Variables', 'SnapPlace', s)
+end
+
+local function loadPlace()
+  local s = SKIN:GetVariable('SnapPlace', '')
+  local spot = s:match('^spot:(%a%a)$')
+  if spot then return { spot = spot } end
+  local hx, ox, vy, oy = s:match('^free:([LCR]),(-?%d+),([TMB]),(-?%d+)$')
+  if hx then return { hx = hx, ox = tonumber(ox), vy = vy, oy = tonumber(oy) } end
+  return nil
+end
+
+-- No place saved (snapping was just switched on, or a version before SnapPlace): the spot we're on, or near, or
+-- the free place where we are
+local function derivePlace(x, y, box)
+  local r = num('SnapRadius', 48)
+  local best, bestD
+  for _, s in ipairs(SPOTS) do
+    local px, py = spotPos(s, box)
+    local d = (px - x) ^ 2 + (py - y) ^ 2
+    if not bestD or d < bestD then best, bestD = s, d end
+  end
+  if best and bestD <= r * r then return { spot = best } end
+  return freePlace(x, y, box)
 end
 
 -- ---------- matching widths of stacked widgets ----------
@@ -260,19 +495,34 @@ function naturalWidth(fresh)
   return v > 0 and math.floor(v + 0.5) or SKIN:GetW()
 end
 
--- When MatchWidths is on and this widget is stacked with another, widen the narrower one to the wider one's width
+-- When MatchWidths is on, every widget in a column of stacked widgets (linked above/below, directly or through each
+-- other) takes the width of the widest one. Widgets beside each other keep their own widths.
 local function updateMatch()
   local want = 0
   if num('MatchWidths', 1) == 1 then
-    local nat, widest, stacked = naturalWidth(), 0, false
-    widest = nat
-    for p, r in pairs(peerRects(true)) do
-      if (attach and attach.peer == p) or r[5] == me then
-        stacked = true
-        if r[6] and r[6] > widest then widest = r[6] end
+    local rects = peerRects(true)
+    local nat = naturalWidth()
+    local links = {}   -- name -> list of names it is stacked with vertically
+    local function link(a, b)
+      links[a] = links[a] or {}; links[b] = links[b] or {}
+      table.insert(links[a], b); table.insert(links[b], a)
+    end
+    if attach and VERTICAL[attach.rel] and rects[attach.peer] then link(me, attach.peer) end
+    for p, r in pairs(rects) do
+      if r[5] and r[5] ~= '' and VERTICAL[r[7]] and (r[5] == me or rects[r[5]]) then link(p, r[5]) end
+    end
+    local widest, seen, queue, qi = nat, { [me] = true }, { me }, 1
+    while qi <= #queue do
+      local q = queue[qi]; qi = qi + 1
+      for _, o in ipairs(links[q] or {}) do
+        if not seen[o] then
+          seen[o] = true; queue[#queue + 1] = o
+          local n = rects[o] and rects[o][6]
+          if n and n > widest then widest = n end
+        end
       end
     end
-    if stacked and widest > nat then want = widest end
+    if #queue > 1 and widest > nat then want = widest end
   end
   if want ~= curMatched then
     curMatched = want
@@ -284,9 +534,7 @@ end
 -- Which screen column the widget sits in (0 left, 1 centre, 2 right), for skins that align content by column
 local curAlign = nil
 local function updateAlign(x, w)
-  local sx, _, sw, _ = screen()
-  local cx = x + w / 2 - sx
-  local a = (cx < sw / 3) and 0 or ((cx > sw * 2 / 3) and 2 or 1)
+  local a = columnOf(x, w)
   if a ~= curAlign then
     curAlign = a
     SKIN:Bang('!SetVariable', 'ColumnAlign', a)
@@ -295,6 +543,7 @@ local function updateAlign(x, w)
 end
 
 -- ---------- sharing position with the other widgets ----------
+local loadedAt = 0
 function Broadcast(bx, by)
   if not me then return end
   if writeLinesNow then writeLinesNow() end
@@ -307,7 +556,8 @@ function Broadcast(bx, by)
     savedW, savedH = w, h
     SKIN:Bang('!WriteKeyValue', 'Variables', 'SnapSize', w .. ',' .. h)
   end
-  local s = string.format('%d,%d,%d,%d,%s,%d', bx or SKIN:GetX(), by or SKIN:GetY(), w, h, attach and attach.peer or '', lastNat)
+  local s = string.format('%d,%d,%d,%d,%s,%d,%s,%d', bx or SKIN:GetX(), by or SKIN:GetY(), w, h,
+    attach and attach.peer or '', lastNat, attach and attach.rel or '', math.floor(loadedAt * 1000))
   for _, p in ipairs(livePeers()) do
     SKIN:Bang('!SetVariable', 'Peer_' .. key(me), s, p)
     -- let the other widget follow/match now rather than on its next tick
@@ -364,17 +614,24 @@ end
 -- Called by a peer right after it shared a new position/size: react immediately
 local inPeerChanged = false
 function PeerChanged(from)
-  if from then gone[from] = nil; if not closed then live[from] = true end end
-  if dragging or inPeerChanged then return end   -- (no chain reaction back into us: the next tick catches up)
+  if from then
+    gone[from] = nil
+    -- a widget we hadn't heard from yet: if we just loaded, check that we aren't on top of it
+    if not live[from] and os.clock() - loadedAt < NEWCOMER_SECS then still = math.min(still, STILL_TICKS - 1) end
+    if not closed then live[from] = true end
+  end
+  -- (no chain reaction back into us, and no moves before every widget has answered our Hello: the next tick
+  -- catches up)
+  if dragging or carried or glide or carry or inPeerChanged or greeting then return end
   inPeerChanged = true
-  still = math.max(still, STILL_TICKS)
+  if still ~= STILL_TICKS - 1 then still = math.max(still, STILL_TICKS) end
   Update()
   inPeerChanged = false
 end
 
 -- Called by the Settings panel after a margin changed: re-snap to the nearest spot as if just parked.
 function Resnap()
-  if dragging or not enabled then return end
+  if dragging or carried or not enabled then return end
   still = STILL_TICKS - 1
   Update()
 end
@@ -384,69 +641,162 @@ function DetachFrom(peer)
   if attach and attach.peer == peer then attach = nil; saveAttach() end
 end
 
+-- ---------- carrying the widgets stacked on us ----------
+-- While we are dragged or glide, we move the widgets stacked on us ourselves, one !Move each per frame. (Letting
+-- each of them follow through PeerChanged made every frame a cascade: each moved widget told every other widget,
+-- and each of those ran its whole snap logic.) A carried widget only keeps track of where it is (Carry) and settles
+-- through its own logic once we let go of it.
+function Carry(on)
+  if tonumber(on) == 1 then
+    carried, carriedAt = true, os.clock()
+    if glide then glide = nil; fastTick(TICK_GLIDE, false) end
+    return
+  end
+  if not carried then return end
+  carried = false
+  lastX, lastY = SKIN:GetX(), SKIN:GetY()
+  still = STILL_TICKS - 1   -- the next Update re-aligns and shares our position, for the widgets stacked on us
+  Update()
+end
+
+local function startCarry(group)
+  if #group.members == 0 then carry = nil; return end
+  local at = carry and carry.at or {}
+  carry = { members = group.members, at = at }
+  for _, m in ipairs(group.members) do
+    if live[m.name] then SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Carry(1)', m.name) end
+    if not at[m.name] then at[m.name] = { nil, nil } end
+  end
+end
+
+-- pos: { name = { x, y } } for the members
+local function carryTo(pos)
+  if not carry then return end
+  for _, m in ipairs(carry.members) do
+    local p, a = pos[m.name], carry.at[m.name]
+    if p and live[m.name] and (a[1] ~= p[1] or a[2] ~= p[2]) then
+      SKIN:Bang('!Move', p[1], p[2], m.name)
+      carry.at[m.name] = { p[1], p[2] }
+    end
+  end
+end
+
+-- the members at the offsets they had from us when the drag started
+local function rigid(x, y)
+  local pos = {}
+  for _, m in ipairs(carry.members) do pos[m.name] = { x + m.dx, y + m.dy } end
+  return pos
+end
+
+-- Let go of the carried widgets, parents first, so each one has shared where it is before its own followers settle.
+-- Call it after our own Broadcast.
+local function endCarry()
+  if not carry then return end
+  local members = carry.members
+  carry = nil
+  inPeerChanged = true   -- their broadcasts call our PeerChanged: we've just settled, nothing to do
+  for _, m in ipairs(members) do
+    if live[m.name] then SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Carry(0)', m.name) end
+  end
+  inPeerChanged = false
+end
+
 -- ---------- guides overlay ----------
 local function setGuide(name, value) SKIN:Bang('!SetVariable', name, value, GUIDES) end
 
-local function styleGuide(j, on)
-  if on then
+-- kind: 'snap' (where it lands, on a target), 'free' (where it lands, off the targets) or 'near' (another target)
+local function styleGuide(j, kind)
+  if kind == 'snap' then
     setGuide('Fill' .. j, '120,175,255,70'); setGuide('Stroke' .. j, '255,255,255,235'); setGuide('Width' .. j, '2')
+  elseif kind == 'free' then
+    setGuide('Fill' .. j, '255,255,255,28'); setGuide('Stroke' .. j, '255,255,255,200'); setGuide('Width' .. j, '1.5')
   else
     setGuide('Fill' .. j, '0,0,0,0'); setGuide('Stroke' .. j, '255,255,255,110'); setGuide('Width' .. j, '1.5')
   end
 end
 
--- Only the guide losing the tint and the one gaining it change, so only those two meters are updated
--- (showGuides resets all of them at the start of a drag).
-local function highlight(i)
-  if i == target then return end
-  if target then styleGuide(target, false); SKIN:Bang('!UpdateMeter', 'Guide' .. target, GUIDES) end
-  if i then styleGuide(i, true); SKIN:Bang('!UpdateMeter', 'Guide' .. i, GUIDES) end
-  target = i
-  SKIN:Bang('!Redraw', GUIDES)
+-- What each guide shows ('x,y,kind' or 'hidden'): only guides that change are sent and redrawn
+local guideShown = {}
+local guidesAt = 0      -- os.clock() of the last redraw
+local function setSlot(j, gx, gy, kind)
+  local state = kind and (gx .. ',' .. gy .. ',' .. kind) or 'hidden'
+  if guideShown[j] == state then return false end
+  guideShown[j] = state
+  if kind then
+    setGuide('GX' .. j, gx); setGuide('GY' .. j, gy); setGuide('GH' .. j, '0'); styleGuide(j, kind)
+  else
+    setGuide('GH' .. j, '1')
+  end
+  SKIN:Bang('!UpdateMeter', 'Guide' .. j, GUIDES)
+  return true
 end
 
 -- Tooltips are left alone while dragging: Windows already hides a tooltip when the mouse button goes down, and
 -- toggling ToolTipHidden at runtime left half-faded tooltips stuck on screen.
-local function setTooltips(hidden) end
 
-local function showGuides(w, h, i)
+-- Show the landing spot and the targets within reach of x, y. A landing spot that only moved along the grid is
+-- redrawn at most every 50 ms: the guides are a screen-sized window, and redrawing it on every frame of a fast drag
+-- costs more than the drag itself.
+local function updateGuides(x, y, landing)
+  if not landing then return end
+  local now = os.clock()
+  local key = (landing.free and 'free' or tostring(landing)) .. ',' .. landing.x .. ',' .. landing.y
+  if key == drag.landingKey then return end
+  if landing.free and drag.landingFree and now - guidesAt < 0.05 then return end
+  drag.landingKey, drag.landingFree = key, landing.free
   local sx, sy = screen()
-  setTooltips(true)
-  setGuide('W', w); setGuide('H', h)
-  for j = 1, MAX_GUIDES do
-    local t = targets[j]
-    if t then setGuide('GX' .. j, t.x - sx); setGuide('GY' .. j, t.y - sy); setGuide('GH' .. j, '0')
-    else setGuide('GH' .. j, '1') end
-    styleGuide(j, false)
+  local box = drag.group.box
+  local reach = (5 * num('SnapRadius', 48)) ^ 2
+  local near = {}
+  for _, t in ipairs(targets) do
+    local d = (t.x - x) ^ 2 + (t.y - y) ^ 2
+    if t ~= landing and d <= reach then near[#near + 1] = { t = t, d = d } end
   end
-  target = nil
+  table.sort(near, function(a, b) return a.d < b.d end)
+  local changed = false
+  for j = 1, MAX_GUIDES - 1 do
+    local n = near[j]
+    if n then changed = setSlot(j, n.t.x + box[1] - sx, n.t.y + box[2] - sy, 'near') or changed
+    else changed = setSlot(j) or changed end
+  end
+  changed = setSlot(LANDING, landing.x + box[1] - sx, landing.y + box[2] - sy, landing.free and 'free' or 'snap') or changed
+  if changed then SKIN:Bang('!Redraw', GUIDES); guidesAt = now end
+end
+
+local function showGuides()
+  local box = drag.group.box
+  setGuide('W', box[3] - box[1]); setGuide('H', box[4] - box[2])
+  guideShown = {}
+  for j = 1, MAX_GUIDES do setGuide('GH' .. j, '1'); guideShown[j] = 'hidden' end
   SKIN:Bang('!UpdateMeter', '*', GUIDES)
-  highlight(i)
   SKIN:Bang('!ShowFade', GUIDES)
   dragging = true
   fastTick(TICK_DRAG, true)
 end
 
 local function hideGuides()
-  if dragging then SKIN:Bang('!HideFade', GUIDES); setTooltips(false); fastTick(TICK_DRAG, false) end
+  if dragging then SKIN:Bang('!HideFade', GUIDES); fastTick(TICK_DRAG, false) end
   dragging = false
-  target = nil
+  drag = nil
 end
 
 -- Where we go when the widget we're stacked on (last at rect g) has closed: into its place, keeping the edge
--- that faced it (stacked below it: our top where its top was; above it: our bottom where its bottom was)
+-- that faced it (stacked below it: our top where its top was; above it: our bottom where its bottom was;
+-- beside it: our outer edge where its outer edge was)
 local function placeOf(g, rel, w, h)
-  local sx, _, sw, _ = screen()
-  local cx = g[1] + g[3] / 2 - sx
-  local x
-  if cx < sw / 3 then x = g[1]
-  elseif cx > sw * 2 / 3 then x = g[1] + g[3] - w
+  if not VERTICAL[rel] then
+    local x = (rel:sub(1, 1) == 'l') and (g[1] + g[3] - w) or g[1]
+    local y = (rel:sub(-1) == 'T') and g[2] or (g[2] + g[4] - h)
+    return x, y
+  end
+  local col, x = columnOf(g[1], g[3])
+  if col == 0 then x = g[1]
+  elseif col == 2 then x = g[1] + g[3] - w
   else x = g[1] + math.floor((g[3] - w) / 2) end
   return x, (rel == 'below') and g[2] or (g[2] + g[4] - h)
 end
 
 -- First shown widget (in SnapPeers order) that nothing is stacked on and that isn't stacked on us
-local loadedAt = 0
 function stackFallback()
   local rects = peerRects(true)
   for _, p in ipairs(peers) do
@@ -460,20 +810,68 @@ function stackFallback()
   return nil
 end
 
--- Does another widget sit stacked on us? Then it follows us live while we are dragged or glide.
-local function hasFollowers()
-  for _, r in pairs(peerRects(true)) do if r[5] == me then return true end end
-  return false
+-- Take target t: attach to its widget, or park on its spot / free place
+local function takeTarget(t, box)
+  if t.peer then
+    attach = { peer = t.peer, rel = t.rel }
+    if live[t.peer] then SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'DetachFrom(' .. quoted(me) .. ')', t.peer) end
+  else
+    attach = nil
+    place = t.spot and { spot = t.spot } or freePlace(t.x, t.y, box)
+    savePlace()
+  end
+  saveAttach()
+end
+
+-- We overlap another widget (we just loaded on top of it, or the spot we stack on has no room): move to the nearest
+-- target that is free. Returns its position, or nil if there is none.
+local function relocate(x, y, w, h)
+  local group = groupOf(x, y, w, h)
+  local t = nearestTarget(x, y, buildTargets(group, w, h))
+  if not t then return nil end
+  dbg('overlapping: moving to ' .. t.x .. ',' .. t.y .. (t.peer and (' ' .. t.rel .. ' ' .. t.peer) or (' spot ' .. t.spot)))
+  takeTarget(t, group.box)
+  return t.x, t.y
+end
+
+-- Called by a widget that overlaps us and has nowhere else to go: we move to the nearest free target instead
+function MakeRoom()
+  if dragging or carried or glide or carry or not enabled then return end
+  local x, y = SKIN:GetX(), SKIN:GetY()
+  local w, h = size()
+  local tx, ty = relocate(x, y, w, h)
+  if not tx or (tx == x and ty == y) then return end
+  SKIN:Bang('!Move', tx, ty)
+  lastX, lastY, still = tx, ty, STILL_TICKS
+  updateMatch(); updateAlign(tx, w)
+  Broadcast(tx, ty)
+end
+
+-- Overlapping peer p: whichever of us loaded later moves (ties: the one later in SnapPeers), so only one does
+local function iShouldMove(p, rects)
+  local r = rects[p]
+  local theirs, mine = r and r[8], math.floor(loadedAt * 1000)
+  if theirs and theirs ~= mine then return theirs < mine end
+  for q in (SKIN:GetVariable('SnapPeers', '')):gmatch('[^|]+') do
+    if q == me then return false end
+    if q == p then return true end
+  end
+  return true
 end
 
 -- ---------- glide into the spot after a drop ----------
 local function easeOut(t) return 1 - (1 - t) ^ 3 end
 
--- Positions in between are reported to the other widgets only when one of them follows us; the final
--- position is always reported (by Update) once the glide ends.
-local function startGlide(fx, fy, tx, ty)
-  if math.abs(tx - fx) + math.abs(ty - fy) < 4 then return false end   -- too close to see: just move
-  glide = { fx = fx, fy = fy, tx = tx, ty = ty, start = os.clock(), atX = fx, atY = fy }
+-- The widgets we carry glide with us, each from where it is to where it settles (to = layoutGroup)
+local function startGlide(fx, fy, tx, ty, to)
+  local from = {}
+  if carry then for _, m in ipairs(carry.members) do from[m.name] = carry.at[m.name] end end
+  local far = math.abs(tx - fx) + math.abs(ty - fy) >= 4
+  for name, p in pairs(from) do
+    if to[name] and p[1] and math.abs(to[name][1] - p[1]) + math.abs(to[name][2] - p[2]) >= 4 then far = true end
+  end
+  if not far then return false end   -- too close to see: just move
+  glide = { fx = fx, fy = fy, tx = tx, ty = ty, start = os.clock(), atX = fx, atY = fy, from = from, to = to }
   fastTick(TICK_GLIDE, true)
   return true
 end
@@ -487,19 +885,31 @@ end
 local function stepGlide()
   local g = glide
   local p = (os.clock() - g.start) / GLIDE_SECS
-  local nx, ny
-  if p >= 1 then nx, ny = g.tx, g.ty
-  else
-    local e = easeOut(math.max(0, p))
-    nx, ny = math.floor(g.fx + (g.tx - g.fx) * e + 0.5), math.floor(g.fy + (g.ty - g.fy) * e + 0.5)
-  end
+  local e = (p >= 1) and 1 or easeOut(math.max(0, p))
+  local function at(a, b) return math.floor(a + (b - a) * e + 0.5) end
+  local nx, ny = at(g.fx, g.tx), at(g.fy, g.ty)
   if nx ~= g.atX or ny ~= g.atY then
     SKIN:Bang('!Move', nx, ny)
     g.atX, g.atY = nx, ny
     lastX, lastY = nx, ny
-    if followers and p < 1 then Broadcast(nx, ny) end
+  end
+  if carry then
+    local pos = {}
+    for name, f in pairs(g.from) do
+      local t = g.to[name]
+      if t and f[1] then pos[name] = { at(f[1], t[1]), at(f[2], t[2]) } elseif t then pos[name] = { t[1], t[2] } end
+    end
+    carryTo(pos)
   end
   return p >= 1
+end
+
+-- Done moving after a drop: match, align, share where we are, and let go of the widgets we carried
+local function settle(x, y, w)
+  lastX, lastY, still = x, y, STILL_TICKS
+  updateMatch(); updateAlign(x, w)
+  Broadcast(x, y)
+  endCarry()
 end
 
 -- ---------- main ----------
@@ -514,7 +924,8 @@ function Initialize()
   enabled = num('SnapEnabled', 1) == 1
   local a = SKIN:GetVariable('SnapAttach', '')
   local ap, ar = a:match('^(.-)|(%a+)$')
-  if ap and ap ~= '' then attach = { peer = ap, rel = ar } end
+  if ap and ap ~= '' and OPPOSITE[ar] then attach = { peer = ap, rel = ar } end
+  place = loadPlace()
   -- the guides overlay: switch it on unless Rainmeter already has it (on, or about to load it at startup)
   local act = activeConfigs()
   if not (act and act[GUIDES:lower()]) then SKIN:Bang('!ActivateConfig', GUIDES, 'SnapGuides.ini') end
@@ -522,6 +933,135 @@ function Initialize()
   viewPending = (tonumber(SKIN:GetVariable('View', '0')) or 0) > 0
   -- say Hello to the others (and get their positions) once loading is over: see sayHello
   helloPending = true
+end
+
+-- Dropped: move the group to where it lands, and remember a stack relationship or the place
+local function dropped(x, y, w, h)
+  local tx, ty
+  local group = drag.group
+  group.box[3], group.box[4] = math.max(group.box[3], w), math.max(group.box[4], h)
+  targets = buildTargets(group, w, h, drag.obstacles)
+  local t = chooseTarget(x, y, w, h)
+  hideGuides()
+  if t then
+    tx, ty = t.x, t.y
+    takeTarget(t, group.box)
+    dbg('dropped -> ' .. tx .. ',' .. ty .. (t.peer and (' stacked ' .. t.rel .. ' ' .. t.peer) or (t.spot and (' spot ' .. t.spot) or ' free')))
+  else
+    -- no target and no room where it was dropped (everything is taken): it stays there
+    tx, ty = x, y
+    attach, place = nil, freePlace(x, y, group.box)
+    saveAttach(); savePlace()
+  end
+  -- Slide into the spot instead of jumping there; the glide's last frame does the usual matching and sharing
+  if startGlide(x, y, tx, ty, layoutGroup(group, tx, ty, w, h)) then return end
+  if tx ~= x or ty ~= y then SKIN:Bang('!Move', tx, ty) end
+  if carry then carryTo(layoutGroup(group, tx, ty, w, h)) end
+  settle(tx, ty, w)
+end
+
+-- Stacked: where we go to follow the widget we sit on (nil: stay)
+local function followTarget(x, y, w, h)
+  local tx, ty
+  dbg('attached to ' .. attach.peer .. ' ' .. attach.rel .. ' peerVar=' .. SKIN:GetVariable('Peer_' .. key(attach.peer), '(none)'))
+  local rects = peerRects(true)
+  -- a ring (saved by an older version, or both dropped at once): the widget we sit on follows us, so we stand
+  -- free. Only once it has lasted a while: right after a widget loads, the others' stack info can be out of date.
+  -- The widget first in SnapPeers order lets go, and snaps to a free spot.
+  local ring, path = followsMe(attach.peer)
+  if ring then ringTicks = ringTicks + 1 else ringTicks = 0 end
+  if ringTicks > 20 then
+    ringTicks = 0
+    local first
+    for p in (SKIN:GetVariable('SnapPeers', '')):gmatch('[^|]+') do
+      if p == me then first = true; break end
+      for _, q in ipairs(path) do if q == p then first = false end end
+      if first == false then break end
+    end
+    if first then
+      dbg('ring via ' .. attach.peer .. ': detached'); attach = nil; saveAttach(); rects = {}
+      still = STILL_TICKS - 1
+    end
+  end
+  local r, own = attach and rects[attach.peer], true
+  -- The widget we sit on is hidden. attach (saved) stays as it is, so we go back once it's shown again.
+  local g = attach and not r and gone[attach.peer]
+  if g then
+    -- it closed while we followed it: sit on what it sat on, or take its place
+    if g[5] and g[5] ~= '' and g[5] ~= me and rects[g[5]] then r, own = rects[g[5]], false
+    else tx, ty = placeOf(g, attach.rel, w, h) end
+  elseif attach and not r and os.clock() - loadedAt > 3 then
+    -- not shown since we loaded: stack on another widget rather than stay where the skin was never placed
+    r, own = rects[stackFallback()], false
+  end
+  if r then
+    -- No room on our side (e.g. it was dragged to the screen edge, or the widget it sits on flipped over to the
+    -- other side of its own one, which is now in our way): switch to the other side
+    local sx, _, sw, _ = screen()
+    local top, bottom = snapLimits()
+    local function fits(rel)
+      local fx, fy = stackPos(r, rel, w, h)
+      if fy < top or fy + h > bottom or fx < sx or fx + w > sx + sw then return false, fx, fy end
+      for p2, r2 in pairs(rects) do
+        if r2 ~= r and not followsMe(p2) and hits(fx, fy, w, h, r2) then return false, fx, fy, p2 end
+      end
+      return true, fx, fy
+    end
+    local ok, blocker
+    ok, tx, ty, blocker = fits(attach.rel)
+    if not ok then
+      local ok2, ox, oy = fits(OPPOSITE[attach.rel])
+      if ok2 then
+        ok, tx, ty = true, ox, oy
+        if own then attach.rel = OPPOSITE[attach.rel]; saveAttach() end   -- not for a stand-in: that would change the real choice
+      end
+    end
+    -- No room on either side: we'd sit on top of another widget, so we stay where we are. (Moving there would push
+    -- that widget out of its own spot instead.) If that lasts, we move to the nearest free target, unless the widget
+    -- in our way loaded after us: then it is the one that moves.
+    if ok then blockedSince = nil
+    else
+      tx, ty = nil, nil
+      if not blockedSince then blockedSince = os.clock()
+      elseif os.clock() - blockedSince > BLOCKED_SECS and (not blocker or iShouldMove(blocker, rects)) then
+        blockedSince = nil
+        tx, ty = relocate(x, y, w, h)
+      end
+    end
+  end
+  return tx, ty
+end
+
+-- Parked: keep our place (e.g. on a right or bottom spot, grow away from the edge)
+local placeMembers = nil   -- the widgets stacked on us when place was last set or checked ('a|b|c')
+local function parkedTarget(x, y, w, h)
+  local group = groupOf(x, y, w, h)
+  local names = {}
+  for _, m in ipairs(group.members) do names[#names + 1] = m.name end
+  local members = table.concat(names, '|')
+  -- A free place describes where the group's box is. When widgets join or leave the group, its box changes, so
+  -- the place is taken again from where we are (otherwise we would jump to keep the new box at the old distance).
+  if place and not place.spot and placeMembers and members ~= placeMembers then place = nil end
+  placeMembers = members
+  if not place then place = derivePlace(x, y, group.box); savePlace() end
+  local tx, ty = placePos(place, group.box)
+  -- Another widget is in the way there (we just loaded on top of it, e.g. shown from Settings, or one of us grew).
+  -- Whichever of us loaded later moves to the nearest free target; if that's the other one, we stay and tell it.
+  local top, bottom = snapLimits()
+  local rects = peerRects()
+  local ok, p = groupFits(group, tx, ty, w, h, rects, top, bottom)
+  if not ok and p then
+    tx, ty = nil, nil
+    if iShouldMove(p, rects) then
+      tx, ty = relocate(x, y, w, h)
+      -- no free target for us (e.g. a tall stack): the other widget makes room instead
+      if not tx and live[p] then Broadcast(x, y); SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'MakeRoom()', p) end
+    elseif live[p] then
+      Broadcast(x, y)   -- (so it sees our new size)
+      SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'Resnap()', p)
+    end
+  end
+  return tx, ty
 end
 
 function Update()
@@ -536,11 +1076,21 @@ function Update()
   local x, y = SKIN:GetX(), SKIN:GetY()
   local w, h = size()
   if w <= 1 or h <= 1 then return 0 end
-  enabled = num('SnapEnabled', 1) == 1   -- can be changed live from the Settings panel
+  -- can be changed live from the Settings panel; once it's back on, the place is worked out again from where we are
+  local nowEnabled = num('SnapEnabled', 1) == 1
+  if nowEnabled and not enabled then place = nil end
+  enabled = nowEnabled
   if not enabled then
     if glide then stopGlide() end
+    if carry then endCarry() end
     if x ~= lastX or y ~= lastY or w ~= lastW or h ~= lastH then lastX, lastY, lastW, lastH = x, y, w, h; Broadcast() end
     return 0
+  end
+
+  -- Another widget is carrying us (we are stacked on it and it is being dragged): just keep track of where we are
+  if carried then
+    if os.clock() - carriedAt < CARRY_SECS then lastX, lastY = x, y; return 0 end
+    carried = false
   end
 
   if glide then
@@ -549,9 +1099,7 @@ function Update()
       -- Arrived. lastW/lastH still hold the size at the drop, so a size change during the glide re-aligns next tick.
       local tx, ty = glide.tx, glide.ty
       stopGlide()
-      lastX, lastY, still = tx, ty, STILL_TICKS
-      updateMatch(); updateAlign(tx, w)
-      Broadcast(tx, ty)
+      settle(tx, ty, w)
       return 1
     end
     -- Grabbed again mid-glide, or moved by something else (a wallpaper change): handled below as usual
@@ -560,12 +1108,17 @@ function Update()
 
   if x ~= lastX or y ~= lastY then
     if lastX ~= nil then
-      -- Being dragged by the user: show the targets and highlight the one it would snap to
-      if not dragging then targets = buildTargets(w, h); attach = nil; followers = hasFollowers() end
-      local _, i = nearestTarget(x, y)
-      if dragging then highlight(i) else showGuides(w, h, i) end
-      -- a widget stacked on us moves with us during the drag instead of jumping after the drop
-      if followers then Broadcast(x, y) end
+      -- Being dragged by the user: show the targets near it and where it would land, and carry its stack along
+      if not dragging then
+        attach = nil
+        -- (the offsets are from where we were before this first step of the drag: the others haven't moved yet)
+        drag = { group = groupOf(lastX, lastY, w, h, carry and carry.at), obstacles = peerRects() }
+        targets = buildTargets(drag.group, w, h, drag.obstacles)
+        startCarry(drag.group)
+        showGuides()
+      end
+      updateGuides(x, y, chooseTarget(x, y, w, h))
+      if carry then carryTo(rigid(x, y)) end
     end
     lastX, lastY, still = x, y, 0
     lastW, lastH = w, h
@@ -585,87 +1138,12 @@ function Update()
 
   local tx, ty
   if dragging then
-    -- Dropped: snap to the nearest target and remember a stack relationship
-    targets = buildTargets(w, h)
-    local t = nearestTarget(x, y)
-    if t then
-      tx, ty = t.x, t.y
-      if t.peer then
-        attach = { peer = t.peer, rel = t.rel }
-        if live[t.peer] then SKIN:Bang('!CommandMeasure', 'MeasureSnap', 'DetachFrom(' .. quoted(me) .. ')', t.peer) end
-      else
-        attach = nil
-      end
-      saveAttach()
-      dbg('dropped -> ' .. tx .. ',' .. ty .. (t.peer and (' stacked ' .. t.rel .. ' ' .. t.peer) or ' screen spot'))
-    end
-    hideGuides()
-    -- Slide into the spot instead of jumping there; the glide's last frame does the usual matching and sharing
-    if tx and startGlide(x, y, tx, ty) then return 1 end
+    dropped(x, y, w, h)
+    return 1
   elseif attach then
-    -- Stacked: follow the widget we sit on
-    dbg('attached to ' .. attach.peer .. ' ' .. attach.rel .. ' peerVar=' .. SKIN:GetVariable('Peer_' .. key(attach.peer), '(none)'))
-    local rects = peerRects(true)
-    -- a ring (saved by an older version, or both dropped at once): the widget we sit on follows us, so we stand
-    -- free. Only once it has lasted a while: right after a widget loads, the others' stack info can be out of date.
-    -- The widget first in SnapPeers order lets go, and snaps to a free spot.
-    local ring, path = followsMe(attach.peer)
-    if ring then ringTicks = ringTicks + 1 else ringTicks = 0 end
-    if ringTicks > 20 then
-      ringTicks = 0
-      local first
-      for p in (SKIN:GetVariable('SnapPeers', '')):gmatch('[^|]+') do
-        if p == me then first = true; break end
-        for _, q in ipairs(path) do if q == p then first = false end end
-        if first == false then break end
-      end
-      if first then
-        dbg('ring via ' .. attach.peer .. ': detached'); attach = nil; saveAttach(); rects = {}
-        still = STILL_TICKS - 1
-      end
-    end
-    local r, own = attach and rects[attach.peer], true
-    -- The widget we sit on is hidden. attach (saved) stays as it is, so we go back once it's shown again.
-    local g = attach and not r and gone[attach.peer]
-    if g then
-      -- it closed while we followed it: sit on what it sat on, or take its place
-      if g[5] and g[5] ~= '' and g[5] ~= me and rects[g[5]] then r, own = rects[g[5]], false
-      else tx, ty = placeOf(g, attach.rel, w, h) end
-    elseif attach and not r and os.clock() - loadedAt > 3 then
-      -- not shown since we loaded: stack on another widget rather than stay where the skin was never placed
-      r, own = rects[stackFallback()], false
-    end
-    if r then
-      -- No room on our side (e.g. it was dragged to the screen edge, or the widget it sits on flipped over to the
-      -- other side of its own one, which is now in our way): switch to the other side
-      local sx, sy, sw, sh = screen()
-      local top, bottom = sy + num('SnapMargin', 28) / 2, sy + sh - num('SnapBottomMargin', 76)
-      local function fits(rel)
-        local x, y = stackPos(r, rel, w, h)
-        if y < top or y + h > bottom then return false, x, y end
-        for p2, r2 in pairs(rects) do
-          -- (stacked panels overlap a little on purpose when the tint is off: only a real collision counts)
-          if r2 ~= r and not followsMe(p2) and x < r2[1] + r2[3] - 4 and x + w > r2[1] + 4
-             and y < r2[2] + r2[4] - 40 and y + h > r2[2] + 40 then return false, x, y end
-        end
-        return true, x, y
-      end
-      local ok
-      ok, tx, ty = fits(attach.rel)
-      if not ok then
-        local other = (attach.rel == 'above') and 'below' or 'above'
-        local ok2, ox, oy = fits(other)
-        if ok2 then
-          tx, ty = ox, oy
-          if own then attach.rel = other; saveAttach() end   -- not for a stand-in: that would change the real choice
-        end
-      end
-    end
+    tx, ty = followTarget(x, y, w, h)
   elseif sizeChanged or still == STILL_TICKS then
-    -- Parked on a screen spot: keep aligned (e.g. right/bottom spots when the widget grows)
-    targets = buildTargets(w, h)
-    local t = nearestTarget(x, y)
-    if t and not t.peer then tx, ty = t.x, t.y end
+    tx, ty = parkedTarget(x, y, w, h)
   end
 
   local moved = false
@@ -679,6 +1157,7 @@ function Update()
   if moved or sizeChanged or still == STILL_TICKS or naturalWidth() ~= lastNat then Broadcast(x, y) end
   return 1
 end
+
 
 -- ---------- move with the wallpaper (Settings: "Move widgets with wallpaper", AutoPlace=1) ----------
 -- Loopscape writes the style on screen to %LOCALAPPDATA%\Loopscape\wallstyle.txt. When it changes, each free-standing widget
@@ -731,17 +1210,17 @@ function writeMoveFile(tx, ty)
   return true
 end
 
-function beginMove(tx, ty)
-  if not writeMoveFile(tx, ty) then moveForWallpaper(tx, ty); return end
-  pendingMove = { x = tx, y = ty, deadline = os.clock() + MOVE_WAIT }
+function beginMove(tx, ty, spot)
+  if not writeMoveFile(tx, ty) then moveForWallpaper(tx, ty, spot); return end
+  pendingMove = { x = tx, y = ty, spot = spot, deadline = os.clock() + MOVE_WAIT }
   SKIN:Bang('!CommandMeasure', 'MeasureFastTick', 'Execute 2')   -- 100 ms ticks so the fallback isn't a full second late
 end
 
 function finishMove()
   if not pendingMove then return end
-  local tx, ty = pendingMove.x, pendingMove.y
+  local tx, ty, spot = pendingMove.x, pendingMove.y, pendingMove.spot
   pendingMove = nil
-  moveForWallpaper(tx, ty)
+  moveForWallpaper(tx, ty, spot)
   os.remove(moveFile())
 end
 
@@ -755,18 +1234,9 @@ function checkPendingMove()   -- global: Update calls it (the fallback)
   if pendingMove and os.clock() >= pendingMove.deadline then dbg('move: no colours for the new spot in time'); finishMove() end
 end
 
-local function spotPos(name, w, h)
-  local sx, sy, sw, sh = screen()
-  local m, mb = num('SnapMargin', 28), num('SnapBottomMargin', 76)
-  local col, row = name:sub(2, 2), name:sub(1, 1)
-  local x = (col == 'l') and sx + m or ((col == 'r') and sx + sw - w - m or sx + math.floor((sw - w) / 2))
-  local y = (row == 't') and sy + m or ((row == 'b') and sy + sh - h - mb or sy + math.floor((sh - h) / 2))
-  return x, y
-end
-
 function checkPlacement()   -- global: Update (above) calls it
   if num('AutoPlace', 0) ~= 1 then placedStyle = nil; return end
-  if dragging then return end
+  if dragging or carried then return end
   local now = os.clock()
   if now - lastPlaceCheck < 1 then return end
   lastPlaceCheck = now
@@ -789,24 +1259,29 @@ function checkPlacement()   -- global: Update (above) calls it
   end
   local w, h = size()
   local spot = spotFor(spots, rank)
-  local tx, ty = spotPos(spot, w, h)
+  -- the whole group goes to the spot, so a tall stack still fits on a middle or bottom spot
+  local x, y = SKIN:GetX(), SKIN:GetY()
+  local tx, ty = spotPos(spot, groupOf(x, y, w, h).box)
   dbg('wallpaper ' .. style .. ' -> ' .. spot .. ' ' .. tx .. ',' .. ty .. ' fade ' .. fadeMs)
-  if tx == SKIN:GetX() and ty == SKIN:GetY() then return end
-  -- The wallpaper is crossfading (fadeMs since Loopscape wrote the file, minus up to a second until we read it):
-  -- fade out with the old wallpaper, move while it blends, fade in over the new one. Widgets stacked on us join in.
-  local dur = fadeMs / 1000 - 0.5
+  if tx == x and ty == y then place = { spot = spot }; savePlace(); return end
+  -- The wallpaper is crossfading: Loopscape wrote the file as the crossfade started, and its PlaceNow() call takes
+  -- about 0.2 s to reach us. Fade out with the old wallpaper, move at the crossfade's midpoint, fade in over the
+  -- new one. Widgets stacked on us join in.
+  local dur = fadeMs / 1000 - 0.2
   if dur >= 0.4 then
-    startWallFade(os.clock(), dur, tx, ty)
+    startWallFade(os.clock(), dur, tx, ty, spot)
   else
-    beginMove(tx, ty)
+    beginMove(tx, ty, spot)
   end
 end
 
 -- ---------- fade with the wallpaper crossfade ----------
-local wallFade = nil   -- { start, dur, tx, ty, moved } (tx = nil: stacked, we follow the widget below/above us)
+local wallFade = nil   -- { start, dur, tx, ty, spot, moved } (tx = nil: stacked, we follow the widget below/above us)
 local OUT_END, IN_START = 0.42, 0.58   -- fractions of the fade: fading out, invisible (move at 0.5), fading in
 
-function moveForWallpaper(tx, ty)
+-- spot: the screen spot we move to, which becomes our place
+function moveForWallpaper(tx, ty, spot)
+  if spot and not attach then place = { spot = spot }; savePlace() end
   if tx == SKIN:GetX() and ty == SKIN:GetY() then return end
   SKIN:Bang('!Move', tx, ty)
   lastX, lastY, still = tx, ty, STILL_TICKS
@@ -819,8 +1294,8 @@ local function ease(t) return t * t * (3 - 2 * t) end
 -- Colours: Loopscape reads our destination from the incoming style (moveto.txt) and sends entries tagged at=;
 -- checkTheme keeps them in wallFade.colours while we're still visible at the old spot, and they're applied while
 -- we're invisible, just before the move, so we fade in already in the right colours.
-function startWallFade(start, dur, tx, ty)
-  wallFade = { start = start, dur = dur, tx = tx, ty = ty, moved = false }
+function startWallFade(start, dur, tx, ty, spot)
+  wallFade = { start = start, dur = dur, tx = tx, ty = ty, spot = spot, moved = false }
   if tx then wallFade.notify = writeMoveFile(tx, ty) end
   -- widgets stacked on us move when we do, so they fade on the same clock (one Rainmeter process: os.clock is shared)
   for _, p in ipairs(livePeers()) do
@@ -834,7 +1309,7 @@ function startWallFade(start, dur, tx, ty)
 end
 
 function FollowFade(start, dur)
-  if wallFade or dragging then return end
+  if wallFade or dragging or carried then return end
   startWallFade(start, dur, nil, nil)
 end
 
@@ -847,7 +1322,7 @@ function stepWallFade()   -- global: Update (above) calls it
     f.moved = true
     if f.colours then applyStashed(f.colours); dbg('wallfade: colours for the new spot applied, moving')
     elseif f.notify then dbg('wallfade: no colours for the new spot yet') end
-    if f.tx then moveForWallpaper(f.tx, f.ty) end
+    if f.tx then moveForWallpaper(f.tx, f.ty, f.spot) end
   end
   if p >= 1 then
     if f.notify then os.remove(moveFile()) end
@@ -969,14 +1444,18 @@ local function applyColours(set)
         SKIN:Bang('!SetOption', h, 'ColorMatrix5', rgb)
       end
     end
-    if drop then SKIN:Bang('!SetVariable', 'WxDropX', drop[1]); SKIN:Bang('!SetVariable', 'WxDropY', drop[2]) end
+    -- (the halo offsets are pixels at 100%: they grow with the widget size, like the icons do)
+    if drop then
+      SKIN:Bang('!SetVariable', 'WxDropX', drop[1] * scale()); SKIN:Bang('!SetVariable', 'WxDropY', drop[2] * scale())
+    end
   end
   local function textEffects(m, e, role)
     SKIN:Bang('!SetOption', m, 'StringEffect', B.effect or SKIN:GetVariable('TextEffect', 'Shadow'))
     local inl = {}
     if B.halo then
       local h = B.halo
-      inl[#inl + 1] = 'Shadow | ' .. h[1] .. ' | ' .. h[2] .. ' | ' .. h[3] .. ' | ' .. col(e.shadow, h[4])
+      local k = scale()
+      inl[#inl + 1] = 'Shadow | ' .. h[1] * k .. ' | ' .. h[2] * k .. ' | ' .. h[3] * k .. ' | ' .. col(e.shadow, h[4])
     end
     -- per-line mode: the text itself shades from one end to the other, following the wallpaper beneath it
     if e.tend and role ~= 'battery' then
@@ -1180,7 +1659,8 @@ function ViewMenu(mx, my)
   SKIN:Bang('!SetVariable', 'Names', table.concat(names, '|'), VIEW_MENU)
   SKIN:Bang('!SetVariable', 'Current', SKIN:GetVariable('View', '0'), VIEW_MENU)
   -- open with the cursor just inside the menu's top-left corner, so moving away closes it
-  SKIN:Bang('!Move', SKIN:GetX() + (tonumber(mx) or 0) - 14, SKIN:GetY() + (tonumber(my) or 0) - 14, VIEW_MENU)
+  local inset = math.floor(14 * scale() + 0.5)
+  SKIN:Bang('!Move', SKIN:GetX() + (tonumber(mx) or 0) - inset, SKIN:GetY() + (tonumber(my) or 0) - inset, VIEW_MENU)
   SKIN:Bang('!CommandMeasure', 'MeasureMenu', 'Build()', VIEW_MENU)
 end
 
@@ -1196,5 +1676,6 @@ function Toggle()
   local v = enabled and '1' or '0'
   SKIN:Bang('!SetVariable', 'SnapEnabled', v)
   SKIN:Bang('!WriteKeyValue', 'Variables', 'SnapEnabled', v, SKIN:GetVariable('@') .. 'Settings.inc')
-  if enabled then still = 0 else hideGuides(); attach = nil; saveAttach() end
+  -- (switched back on: the place is worked out again from where the widget is now)
+  if enabled then still, place = 0, nil else hideGuides(); attach = nil; saveAttach() end
 end

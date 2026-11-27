@@ -5,10 +5,24 @@
 MatchWidths=1
 ; Snap widgets to screen spots / each other after dragging (1 = on)
 SnapEnabled=1
+; How close (px) a dropped widget must be to a screen spot or another widget's edge to snap to it
+SnapRadius=48
+; Dropped farther away: move to the nearest point of a grid (1) or stay exactly where dropped (0)
+SnapGrid=1
+; Grid spacing (px)
+SnapGridSize=24
 ; Height of the bottom-left / bottom-centre / bottom-right snap spots above the bottom of the screen, in pixels:
 ; 76 clears the taskbar, 28 sits over a transparent taskbar (same margin as the other edges), 8 hugs the bottom of
 ; the screen. The Settings panel also takes any number from 0 to 400.
 SnapBottomMargin=76
+; Room for a bar along the top of the screen (1 = on): the top snap spots move down below it, and dragged widgets
+; stay under it. The room is the height the bar reserves from the desktop, or TopBarHeight (px) for a bar that
+; reserves none
+TopBarBuffer=0
+TopBarHeight=28
+; Widget size: 0 = automatic (bigger on screens taller than 1080 pixels: 1.25 at 1440p, 2 at 4K), or a factor:
+; 1 (100%), 1.25, 1.5, 1.75, 2 or 2.5. See Scale.inc
+WidgetScale=0
 ; Clock: 24 (14:30) or 12 (2:30 PM)
 ClockFormat=12
 ; Clock date line, as a Rainmeter Time format: %a, %#d %B (Wed, 25 November), %a, %m/%d/%y (Wed, 11/25/26),
@@ -30,6 +44,8 @@ TextEffect=Shadow
 TextBoost=5
 ; Rounded pills behind each text line when the panel tint is off (1 = on)
 TextPills=1
+; Animate the clock's weather icon: falling rain and snow, twinkling stars, flashing lightning (1 = on)
+AnimateWeather=0
 ; Adaptive text colour when the panel is off: smooth (white or dark text to suit the wallpaper, checked every second,
 ; fades between them) or off. The Settings panel offers only these two; Loopscape also still reads the older modes
 ; contrast, tinted, smoothtinted and perline, and the panel shows them as On
