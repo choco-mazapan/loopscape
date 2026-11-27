@@ -29,10 +29,12 @@ A '@Include=#@#Settings.inc'
 A 'TextFont=Space Grotesk'
 A '; Layout: content is PanelWidth-2*Pad wide; tabs and wallpaper tiles share three columns (TileW + TileGap)'
 A 'PanelWidth=460'
-A 'PanelHeight=722'
+A 'PanelHeight=754'
 A 'Pad=22'
 A 'Y0=116'
 A 'RowHeight=50'
+A '; Extra space between groups of related rows, with a thin line across the middle of it'
+A 'GroupGap=16'
 A '; Widgets tab: where its setting rows start (below the widget tiles)'
 A 'WRowsY=100'
 A 'LabelW=250'
@@ -54,6 +56,8 @@ A 'ColorPill=255,255,255,28'
 A 'ColorPillHover=120,175,255,90'
 A 'ColorSel=120,175,255,150'
 A 'ColorTileHover=255,255,255,60'
+A '; The line between groups of rows (fainter than the line under the tabs)'
+A 'ColorRule=255,255,255,28'
 A '; Last tab shown (settings.lua writes it back)'
 A 'Tab=Wallpaper'
 A '; Set by settings.lua'
@@ -207,49 +211,59 @@ foreach ($m in @(@('MeterNowHead', 'PLAYING NOW', '(#Y0#+2)', 'StyleHint', 'Font
   A "Text=$($m[1])"; A 'X=(#Pad#+#PrevW#+16)'; A 'W=(#PanelWidth#-2*#Pad#-#PrevW#-16)'; A "Y=$($m[2])"; if ($m[4]) { A $m[4] }; A ''
 }
 
-# ---- setting rows: tab, row index, value meter number, variable, label, hint ----
+# ---- setting rows: tab, row index, group, value meter number, variable, label, hint ----
+# Rows in the same group are related; each group after the first starts GroupGap lower, under a thin line.
 # (variable '#skip' = a button that skips to the next wallpaper, '#update' = one that updates Loopscape, '#city' = the
 # city text box, '#profileN' = profile slot N's menu). settings.lua greys out a row while another setting makes it
 # do nothing, and swaps its hint for the reason.
 $rows = @(
-  @('Wallpaper', 0, 11, 'AutoPlace',     'Move widgets with wallpaper', 'Each style picks its calmest spot'),
-  @('Rotation',  0, 12, 'WallRotateMinutes', 'Change every',          'How long each style stays'),
-  @('Rotation',  1, 13, 'WallNight',     'Night styles',                'At a set time, or after sunset'),
-  @('Rotation',  2, 14, 'WallWeather',   'Match the weather',           'Rain, clear nights, grey skies'),
-  @('Rotation',  3, 15, 'WallOnBattery', 'On battery',                  'What the wallpaper does unplugged'),
-  @('Rotation',  4, 16, 'WallPauseCovered', 'Pause when covered',       'While a window fills the screen'),
-  @('Rotation',  5, 5,  'WallAlwaysAnimate', 'Always animate',          'Never pause for battery or windows'),
-  @('Rotation',  6, 17, '#skip',         'Next wallpaper',              'Also Win+Alt+N, or a widget''s menu'),
+  @('Wallpaper', 0, 0, 11, 'AutoPlace',     'Move widgets with wallpaper', 'Each style picks its calmest spot'),
+  @('Rotation',  0, 0, 12, 'WallRotateMinutes', 'Change every',          'How long each style stays'),
+  @('Rotation',  1, 0, 13, 'WallNight',     'Night styles',                'At a set time, or after sunset'),
+  @('Rotation',  2, 0, 14, 'WallWeather',   'Match the weather',           'Rain, clear nights, grey skies'),
+  @('Rotation',  3, 1, 15, 'WallOnBattery', 'On battery',                  'What the wallpaper does unplugged'),
+  @('Rotation',  4, 1, 16, 'WallPauseCovered', 'Pause when covered',       'While a window fills the screen'),
+  @('Rotation',  5, 1, 5,  'WallAlwaysAnimate', 'Always animate',          'Never pause for battery or windows'),
+  @('Rotation',  6, 2, 17, '#skip',         'Next wallpaper',              'Also Win+Alt+N, or a widget''s menu'),
   # (the Widgets tab's rows start below its widget tiles)
-  @('Widgets',   0, 7,  'ClockFormat',   'Clock format',                '14:30 or 2:30 PM'),
-  @('Widgets',   1, 6,  'DateFormat',    'Date format',                 'How the clock writes the date'),
-  @('Widgets',   2, 3,  'WeatherUnit',   'Temperature',                 'Unit for weather and forecast'),
-  @('Widgets',   3, 21, 'WeatherLocation', 'Weather location',          'A city you type, or Windows location'),
-  @('Widgets',   4, 22, '#city',         'City',                        'Click to type it, then press Enter'),
+  @('Widgets',   0, 0, 7,  'ClockFormat',   'Clock format',                '14:30 or 2:30 PM'),
+  @('Widgets',   1, 0, 6,  'DateFormat',    'Date format',                 'How the clock writes the date'),
+  @('Widgets',   2, 1, 3,  'WeatherUnit',   'Temperature',                 'Unit for weather and forecast'),
+  @('Widgets',   3, 1, 21, 'WeatherLocation', 'Weather location',          'A city you type, or Windows location'),
+  @('Widgets',   4, 1, 22, '#city',         'City',                        'Click to type it, then press Enter'),
   # Snap after dragging sets both SnapEnabled and SnapRadius; Grid sets SnapGrid and SnapGridSize (settings.lua)
-  @('Widgets',   5, 2,  'SnapEnabled',   'Snap after dragging',         'How near a spot a drop has to land'),
-  @('Widgets',   6, 20, 'SnapGrid',      'Grid for other drops',        'Elsewhere, line up to a grid'),
-  @('Widgets',   7, 1,  'MatchWidths',   'Match stacked widths',        'Stacked widgets share one width'),
-  @('Widgets',   8, 19, 'SnapBottomMargin', 'Bottom snap spots',        'Their height above the screen''s edge'),
-  @('Widgets',   9, 29, 'TopBarBuffer',  'Room for a top bar',          'Keep widgets below a bar at the top'),
+  @('Widgets',   5, 2, 2,  'SnapEnabled',   'Snap after dragging',         'How near a spot a drop has to land'),
+  @('Widgets',   6, 2, 20, 'SnapGrid',      'Grid for other drops',        'Elsewhere, line up to a grid'),
+  @('Widgets',   7, 2, 1,  'MatchWidths',   'Match stacked widths',        'Stacked widgets share one width'),
+  @('Widgets',   8, 2, 19, 'SnapBottomMargin', 'Bottom snap spots',        'Their height above the screen''s edge'),
+  @('Widgets',   9, 2, 29, 'TopBarBuffer',  'Room for a top bar',          'Keep widgets below a bar at the top'),
   # Panel darkness first: while it is on, Text pills and Adaptive text colour do nothing
-  @('Look',      0, 4,  'PanelAlpha',    'Panel darkness',              'A dark box behind each widget'),
-  @('Look',      1, 10, 'TextPills',     'Text pills',                  'A dark pill behind each line of text'),
-  @('Look',      2, 9,  'TextColorMode', 'Adaptive text colour',        'Light or dark text to suit the wallpaper'),
-  @('Look',      3, 18, 'TextBoost',     'Text boost',                  'Readable text with no backdrop'),
-  @('Look',      4, 8,  'TextEffect',    'Text effect',                 'Used while Text boost is off'),
-  @('Look',      5, 27, 'WidgetScale',   'Widget size',                 'Auto makes them bigger on large screens'),
-  @('Look',      6, 28, 'AnimateWeather', 'Animate weather icon',      'Rain falls, stars twinkle'),
-  @('Look',      7, 23, '#update',       'Update Loopscape',            'Get the latest version from GitHub'),
+  @('Look',      0, 0, 4,  'PanelAlpha',    'Panel darkness',              'A dark box behind each widget'),
+  @('Look',      1, 0, 10, 'TextPills',     'Text pills',                  'A dark pill behind each line of text'),
+  @('Look',      2, 0, 9,  'TextColorMode', 'Adaptive text colour',        'Light or dark text to suit the wallpaper'),
+  @('Look',      3, 0, 18, 'TextBoost',     'Text boost',                  'Readable text with no backdrop'),
+  @('Look',      4, 0, 8,  'TextEffect',    'Text effect',                 'Used while Text boost is off'),
+  @('Look',      5, 1, 27, 'WidgetScale',   'Widget size',                 'Auto makes them bigger on large screens'),
+  @('Look',      6, 1, 28, 'AnimateWeather', 'Animate weather icon',      'Rain falls, stars twinkle'),
+  @('Look',      7, 2, 23, '#update',       'Update Loopscape',            'Get the latest version from GitHub'),
   # labels and hints are filled in by settings.lua from the profile files
-  @('Profiles',  0, 24, '#profile1',     'Profile 1',                   'Empty'),
-  @('Profiles',  1, 25, '#profile2',     'Profile 2',                   'Empty'),
-  @('Profiles',  2, 26, '#profile3',     'Profile 3',                   'Empty')
+  @('Profiles',  0, 0, 24, '#profile1',     'Profile 1',                   'Empty'),
+  @('Profiles',  1, 0, 25, '#profile2',     'Profile 2',                   'Empty'),
+  @('Profiles',  2, 0, 26, '#profile3',     'Profile 3',                   'Empty')
 )
+$ruled = @{}   # tab and group that already have their line
 foreach ($r in $rows) {
-  $tab, $k, $n, $var, $label, $hint = $r
+  $tab, $k, $g, $n, $var, $label, $hint = $r
   $hid = if ($tab -ne 'Wallpaper') { 'Hidden=1' } else { $null }
-  $y = if ($tab -eq 'Wallpaper') { "(#Y0#+#PrevH#+16+$k*#RowHeight#)" } elseif ($tab -eq 'Widgets') { "(#Y0#+#WRowsY#+$k*#RowHeight#)" } else { "(#Y0#+$k*#RowHeight#)" }
+  $gy = if ($g -gt 0) { "+$g*#GroupGap#" } else { '' }
+  $y = if ($tab -eq 'Wallpaper') { "(#Y0#+#PrevH#+16+$k*#RowHeight#$gy)" } elseif ($tab -eq 'Widgets') { "(#Y0#+#WRowsY#+$k*#RowHeight#$gy)" } else { "(#Y0#+$k*#RowHeight#$gy)" }
+  # the line above a group's first row, halfway between the last row's hint and this row's label
+  if ($g -gt 0 -and -not $ruled.ContainsKey("$tab$g")) {
+    $ruled["$tab$g"] = $true
+    A "; --- $tab : line above group $g ---"
+    A "[MeterRule$tab$g]"; A 'Meter=Shape'; A "Group=Tab$tab"; if ($hid) { A $hid }
+    A "Shape=Line #Pad#,($y-13),(#PanelWidth#-#Pad#),($y-13) | StrokeWidth 1 | Stroke Color #ColorRule#"; A ''
+  }
   $action = if ($var -eq '#skip') { 'NextWallpaper()' } elseif ($var -eq '#update') { 'UpdateLoopscape()' } elseif ($var -eq '#city') { "EditField('city')" }
             elseif ($var -like '#profile*') { "ProfileMenu($($var.Substring(8)))" } else { "Next('$var')" }
   A "; --- $tab : $var ---"
