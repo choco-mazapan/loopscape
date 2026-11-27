@@ -324,8 +324,9 @@ static partial class Loopscape
     }
 
     // ----- commands from the widgets (Now Showing's buttons): State\wallcmd.txt, one per line, appended by the
-    // widget and deleted once read: next, prev, pause, play, pick <style|rotate>. Pausing (also from the tray) freezes
-    // the video until play is pressed or Loopscape restarts; the rotation still moves on, as a frozen frame.
+    // widget and deleted once read: next, prev, pause, play, pick <style|rotate>, update (from the Settings panel) and
+    // settings (the panel loaded: give it a taskbar button). Pausing (also from the tray) freezes the video until play is
+    // pressed or Loopscape restarts; the rotation still moves on, as a frozen frame.
     static volatile bool userPaused;
     static string CmdFile { get { return Path.Combine(State, "wallcmd.txt"); } }
     static bool CommandsWaiting() { try { return File.Exists(CmdFile); } catch { return false; } }
@@ -342,6 +343,7 @@ static partial class Loopscape
             if (c == "next" || c == "prev") { Step(c == "next" ? 1 : -1); changed = true; }
             else if (c == "pause" || c == "play") { userPaused = c == "pause"; Log("widget: " + c); }
             else if (c == "update") StartUpdate("widget");
+            else if (c == "settings") ShowSettingsInTaskbar();   // the Settings panel loaded (SettingsTaskbar.cs)
             else if (c.StartsWith("pick "))
             {
                 string name = c.Substring(5).Trim();
