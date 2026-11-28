@@ -316,6 +316,6 @@ static partial class Loopscape
                              "[!ZPos 1 \"Loopscape\\Settings\"]";
         try { Process.Start(rm, bangs); }
         catch (Exception e) { Log("tray: could not open settings: " + e.Message); return; }
-        ShowSettingsInTaskbar(500);
+        ShowSettingsInTaskbar(500, true);
     }
 }

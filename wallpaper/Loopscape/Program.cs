@@ -109,6 +109,7 @@ static partial class Loopscape
             // Adaptive widget text colours run on their own thread (interval depends on the chosen mode)
             WidgetThemes.Start();
             StartHotkey();
+            StartSettingsKeys();
             StartTray();
             StartWakeSources();
             long iniStamp = ConfigStamp();
