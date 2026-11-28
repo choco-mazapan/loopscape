@@ -4,6 +4,7 @@
 #   - parses every PowerShell script, so a syntax error fails here instead of in the middle of an update
 #   - checks that rainmeter\Loopscape\Settings\Settings.ini matches what rainmeter\gen-settings-ini.ps1 generates
 #   - parses every Lua script with Lua 5.1 (the version Rainmeter runs) and every Python script in the skill
+#   - checks that every #Variable# in the Rainmeter skins is defined, and defined before [Variables] uses it
 name: check
 
 on:
@@ -68,4 +69,7 @@ jobs:
           exit $status
 
       - name: Compile the Python scripts
-        run: python3 -m py_compile $(git ls-files 'skills/*.py')
+        run: python3 -m py_compile $(git ls-files 'skills/*.py' 'rainmeter/*.py')
+
+      - name: Skin variables are defined before use
+        run: python3 rainmeter/check-skin-variables.py
