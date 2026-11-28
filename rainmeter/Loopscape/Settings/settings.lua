@@ -289,11 +289,13 @@ end
 local DD_MAX = 8
 local ddKey = nil    -- what the open list belongs to (a row's variable, or 'profileN')
 local ddPick = nil   -- function(i) run when item i is picked
+local ddCount = 0    -- how many items the open list shows
+local ddSel = 0      -- the lit item: the current value when it opens, then moved by the arrow keys (0: none)
 
 -- Note: the value buttons have no tooltips on purpose. Rainmeter shows a meter's tooltip even under the dropdown,
 -- and changing ToolTipText at runtime leaves orphaned tooltip windows on screen.
 function CloseDropdown()
-  ddKey, ddPick = nil, nil
+  ddKey, ddPick, ddCount, ddSel = nil, nil, 0, 0
   SKIN:Bang('!HideMeterGroup', 'Dropdown')
   SKIN:Bang('!Redraw')
 end
@@ -699,7 +701,7 @@ local function openList(key, meterName, items, sel, pick)
     end
   end
   SKIN:Bang('!ShowMeter', 'DDCatcher'); SKIN:Bang('!ShowMeter', 'DDBack')
-  ddKey, ddPick = key, pick
+  ddKey, ddPick, ddCount, ddSel = key, pick, n, (sel >= 1 and sel <= n) and sel or 0
   SKIN:Bang('!UpdateMeter', '*')
   SKIN:Bang('!Redraw')
 end
@@ -986,4 +988,63 @@ end
 function ResetScroll()
   scrollY = 0
   applyScroll()
+end
+
+-- ---------- keyboard ----------
+-- Rainmeter gives skins no key presses, so Loopscape.exe (SettingsKeys.cs) catches these keys while the panel is the
+-- active window and calls Key with the key's name: up, down, pageup, pagedown, home, end, enter, escape, ctrl+tab and
+-- ctrl+shift+tab. Without Loopscape running, the panel works with the mouse only.
+
+-- Lights item i of the open list, the way hovering over it does
+local function lightItem(i)
+  ddSel = i
+  for k = 1, ddCount do
+    local base = k == i and SKIN:GetVariable('ColorPillHover') or '0,0,0,1'
+    SKIN:Bang('!SetVariable', 'DDBase' .. k, base)
+    SKIN:Bang('!SetOption', 'DDItem' .. k, 'SolidColor', base)
+  end
+  SKIN:Bang('!UpdateMeterGroup', 'Dropdown')
+  SKIN:Bang('!Redraw')
+end
+
+-- An open list: the arrows, Home and End move the light, Enter picks the lit item, Esc closes the list
+local function listKey(name)
+  if name == 'down' then lightItem(ddSel == 0 and 1 or math.min(ddCount, ddSel + 1))
+  elseif name == 'up' then lightItem(ddSel == 0 and ddCount or math.max(1, ddSel - 1))
+  elseif name == 'home' then lightItem(1)
+  elseif name == 'end' then lightItem(ddCount)
+  elseif name == 'enter' then if ddSel > 0 then PickDropdown(ddSel) end
+  elseif name == 'escape' then CloseDropdown()
+  end
+end
+
+-- The rows: the arrows scroll by a row, Page Up and Page Down by a screen less a row, Home and End to the ends
+local function scrollKey(name)
+  if scrollMax <= 0 then return end
+  local row = formula('RowHeight')
+  local page = math.max(row, formula('ViewBottom') - formula('ViewTop') - row)
+  local by = ({ down = row, up = -row, pagedown = page, pageup = -page })[name]
+  if name == 'home' then by = -scrollY elseif name == 'end' then by = scrollMax - scrollY end
+  if not by then return end
+  beforeScroll()
+  scrollY = scrollY + by
+  applyScroll()
+end
+
+-- Ctrl+Tab shows the next tab and Ctrl+Shift+Tab the one before, wrapping around like a browser
+local function nextTab(dir)
+  local cur = SKIN:GetVariable('Tab', 'Wallpaper')
+  for i, t in ipairs(TABS) do
+    if t == cur then ShowTab(TABS[(i - 1 + dir) % #TABS + 1]); return end
+  end
+  ShowTab(TABS[1])
+end
+
+function Key(name)
+  if editing then return end   -- (the text box has the keys: Loopscape sends none while it is open)
+  if name == 'ctrl+tab' then nextTab(1)
+  elseif name == 'ctrl+shift+tab' then nextTab(-1)
+  elseif ddKey then listKey(name)
+  else scrollKey(name)
+  end
 end

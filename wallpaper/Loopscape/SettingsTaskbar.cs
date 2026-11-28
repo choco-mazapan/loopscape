@@ -21,6 +21,7 @@ static partial class Loopscape
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetWindowText")]
     static extern int GetWindowTitle(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int index);
     [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int index, int value);
     [DllImport("user32.dll", EntryPoint = "SetWindowPos")]
@@ -47,9 +48,10 @@ static partial class Loopscape
     // Called for "settings" in wallcmd.txt, and by the tray after it sends the bangs that open the panel. Works on a pool
     // thread: the panel may still be loading, so we look for its window for up to two seconds, and a busy Rainmeter
     // must not hold up the main loop. delayMs lets Rainmeter run bangs it was just sent first (its !ZPos 1 would
-    // otherwise land after us and leave the panel topmost).
-    static void ShowSettingsInTaskbar() { ShowSettingsInTaskbar(0); }
-    static void ShowSettingsInTaskbar(int delayMs)
+    // otherwise land after us and leave the panel topmost). activate makes it the active window, so its keys
+    // (SettingsKeys.cs) work without a click first: the tray asks for that, since the click on its menu lets us.
+    static void ShowSettingsInTaskbar() { ShowSettingsInTaskbar(0, false); }
+    static void ShowSettingsInTaskbar(int delayMs, bool activate)
     {
         ThreadPool.QueueUserWorkItem(delegate
         {
@@ -64,6 +66,7 @@ static partial class Loopscape
                 }
                 if (h == IntPtr.Zero) { Log("settings panel: window not found, no taskbar button"); return; }
                 GiveTaskbarButton(h);
+                if (activate) SetForegroundWindow(h);
             }
             catch (Exception e) { Log("settings panel taskbar button: " + e.Message); }
         });
@@ -74,19 +77,21 @@ static partial class Loopscape
         IntPtr found = IntPtr.Zero;
         EnumWindows(delegate (IntPtr h, IntPtr l)
         {
-            if (Cls(h) != "RainmeterMeterWindow") return true;
-            var t = new StringBuilder(512);
-            GetWindowTitle(h, t, 512);
-            string title = t.ToString();
-            // (already renamed if the panel was refreshed and Rainmeter kept the title we gave it)
-            if (title == SettingsTitle || title.EndsWith(SettingsIniTail, StringComparison.OrdinalIgnoreCase))
-            {
-                found = h;
-                return false;
-            }
-            return true;
+            if (!IsSettingsWindow(h)) return true;
+            found = h;
+            return false;
         }, IntPtr.Zero);
         return found;
+    }
+
+    static bool IsSettingsWindow(IntPtr h)
+    {
+        if (Cls(h) != "RainmeterMeterWindow") return false;
+        var t = new StringBuilder(512);
+        GetWindowTitle(h, t, 512);
+        string title = t.ToString();
+        // (already renamed if the panel was refreshed and Rainmeter kept the title we gave it)
+        return title == SettingsTitle || title.EndsWith(SettingsIniTail, StringComparison.OrdinalIgnoreCase);
     }
 
     static void GiveTaskbarButton(IntPtr h)
