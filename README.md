@@ -83,7 +83,7 @@ All widgets live in `Documents\Rainmeter\Skins\Loopscape`. Clock, Network and No
 
 ## Using Loopscape
 
-Click the Loopscape tray icon to open the widgets' Settings panel, or right-click it for the menu. While the panel is open it has its own taskbar button and shows up in Alt+Tab. When the panel is the active window, the arrow keys, Page Up, Page Down, Home and End scroll a long tab, and Ctrl+Tab and Ctrl+Shift+Tab switch tabs. In an open list, the arrows move the highlight, Enter picks the highlighted item and Esc closes the list. The keys come from Loopscape, so the panel works with the mouse only when Loopscape isn't running.
+Click the Loopscape tray icon to open the widgets' Settings panel, or right-click it for the menu. While the panel is open it has its own taskbar button and shows up in Alt+Tab. When the panel is the active window, the arrow keys, Page Up, Page Down, Home and End scroll a long tab, and Ctrl+Tab and Ctrl+Shift+Tab switch tabs. Tab and Shift+Tab move an outline from one setting or tile to the next, and Enter or Space does what a click on it would: it toggles the value, opens its list, or picks the tile. Esc takes the outline away. In an open list, the arrows move the highlight, Enter or Space picks the highlighted item and Esc closes the list. The keys come from Loopscape, so the panel works with the mouse only when Loopscape isn't running.
 
 ### Pick and rotate styles
 

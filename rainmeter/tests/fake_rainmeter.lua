@@ -310,9 +310,25 @@ function Meter:GetOption(key, default)
   return self.skin:replaceVariables(v)
 end
 function Meter:GetNumberOption(key, default) return tonumber(self:GetOption(key, '')) or default or 0 end
--- Positions are what X and Y evaluate to; a relative position (0R) counts from 0, which is close enough here
-function Meter:GetX(seen) return self.skin:number(self.name, 'X', 0, seen) end
-function Meter:GetY(seen) return self.skin:number(self.name, 'Y', 0, seen) end
+-- Positions are what X and Y evaluate to; a relative position (0R) counts from 0, which is close enough here. As in
+-- Rainmeter, a String meter reports its left and top edges: X and Y less the share of its size that StringAlign puts
+-- before them (Right: all of W, Center: half of it; Bottom: all of H, Center after Left/Center/Right: half of it).
+function Meter:align()
+  if lower(self:GetOption('Meter')) ~= 'string' then return '' end
+  return lower(self:GetOption('StringAlign', 'Left'))
+end
+function Meter:GetX(seen)
+  local x, a = self.skin:number(self.name, 'X', 0, seen), self:align()
+  if a:match('^right') then return x - self:GetW(seen) end
+  if a:match('^center') then return x - self:GetW(seen) / 2 end
+  return x
+end
+function Meter:GetY(seen)
+  local y, a = self.skin:number(self.name, 'Y', 0, seen), self:align()
+  if a:match('bottom$') then return y - self:GetH(seen) end
+  if a:match('^%a+center$') then return y - self:GetH(seen) / 2 end
+  return y
+end
 -- Sizes: W/H if set, else a String meter's text measured at about 0.55 em per character
 function Meter:size(key, seen)
   seen = seen or {}

@@ -1,4 +1,5 @@
--- The Settings panel's keyboard handling (settings.lua Key, called by Loopscape.exe's SettingsKeys.cs) and scrolling
+-- The Settings panel's keyboard handling (settings.lua Key, called by Loopscape.exe's SettingsKeys.cs): scrolling, the
+-- open list's keys, and the outline Tab moves from button to button
 
 local TABS = { 'Wallpaper', 'Rotation', 'Widgets', 'Look', 'Profiles' }
 
@@ -20,6 +21,20 @@ local function openAList(skin)
     if var then
       skin:action(click, sec.name)
       if listOpen(skin) then return var end
+    end
+  end
+end
+
+-- The meter the focus outline is drawn around (3 px outside it), found by its position
+local function focused(skin)
+  if num(skin, 'FocusOn') ~= 1 then return nil end
+  local x, y = num(skin, 'FocusX') + 3, num(skin, 'FocusY') + 3
+  local group = 'Tab' .. var(skin, 'Tab')
+  for _, sec in ipairs(skin.order) do
+    local m = skin.meters[sec.name:lower()]
+    if m and m:GetOption('Group') == group and (skin:option(sec.name, 'LeftMouseUpAction') or '') ~= ''
+        and m:GetX() == x and m:GetY() == y then
+      return sec.name
     end
   end
 end
@@ -100,6 +115,86 @@ return {
     openAList(skin)
     run(skin, "Key('end')"); run(skin, "Key('enter')")
     t.check(not listOpen(skin), 'Enter should pick the lit item and close the list')
+  end },
+
+  { 'Tab and Shift+Tab move the outline through every button and tile in reading order, wrapping around', function(t)
+    local skin = panel(t)
+    for _, tab in ipairs(TABS) do
+      run(skin, "ShowTab('" .. tab .. "')")
+      t.check(num(skin, 'FocusOn') == 0, tab .. ': a tab should open with nothing outlined')
+      local seen, order, lastY = {}, {}, -1
+      for _ = 1, 60 do
+        run(skin, "Key('tab')")
+        local name = focused(skin)
+        t.check(name ~= nil, tab .. ': after Tab the outline should be around a button or tile')
+        if not name or seen[name] then break end
+        seen[name] = true; order[#order + 1] = name
+        local y = skin.meters[name:lower()]:GetY()
+        t.check(y >= lastY, tab .. ': Tab should go top to bottom, but ' .. name .. ' is above the one before it')
+        lastY = y
+      end
+      t.check(#order > 0, tab .. ': Tab outlines nothing')
+      t.check(focused(skin) == order[1], tab .. ': Tab after the last one should wrap to the first')
+      run(skin, "Key('shift+tab')")
+      t.check(focused(skin) == order[#order], tab .. ': Shift+Tab from the first should wrap to the last')
+      run(skin, "Key('shift+tab')")
+      if #order > 1 then t.check(focused(skin) == order[#order - 1], tab .. ': Shift+Tab should go back one') end
+      run(skin, "Key('escape')")
+      t.check(num(skin, 'FocusOn') == 0, tab .. ': Esc should take the outline away')
+    end
+  end },
+
+  { 'Enter and Space do what a click on the outlined button does', function(t)
+    local skin = panel(t)
+    local tested = 0
+    for _, tab in ipairs(TABS) do
+      run(skin, "ShowTab('" .. tab .. "')")
+      for _ = 1, 60 do
+        run(skin, "Key('tab')")
+        local name = focused(skin)
+        local v = name and (skin:option(name, 'LeftMouseUpAction') or ''):match("Next%('([%w_]+)'%)")
+        if v then
+          local before = var(skin, v)
+          run(skin, "Key('space')")
+          if listOpen(skin) then
+            run(skin, "Key('escape')")
+            t.check(not listOpen(skin), tab .. ': Esc should close the list Space opened')
+          else
+            t.check(var(skin, v) ~= before, tab .. ': Space on ' .. name .. ' should change ' .. v)
+            run(skin, "Key('enter')")
+            t.check(var(skin, v) == before, tab .. ': Enter on ' .. name .. ' should change ' .. v .. ' back')
+          end
+          t.check(focused(skin) == name, tab .. ': the outline should stay on ' .. name)
+          tested = tested + 1
+          break
+        end
+      end
+    end
+    t.check(tested >= 3, 'only ' .. tested .. ' tab(s) have a setting to try Enter and Space on')
+  end },
+
+  { 'the outline scrolls into view, and switching tabs or opening a list leaves it where it should be', function(t)
+    local skin = panel(t)
+    if not tallTab(skin) then return end
+    run(skin, "Key('shift+tab')")
+    local y, h = num(skin, 'FocusY') - num(skin, 'ScrollY'), num(skin, 'FocusH')
+    t.check(num(skin, 'ScrollY') > 0, 'Shift+Tab to the last button should scroll down to it')
+    t.check(y + h <= skin:formula('(#ViewBottom#)', 'test'), 'the last button should be above the bottom of the view')
+    run(skin, "Key('tab')")
+    t.check(num(skin, 'ScrollY') == 0 or num(skin, 'FocusY') - num(skin, 'ScrollY') >= skin:formula('(#ViewTop#)', 'test'),
+      'Tab back to the first button should scroll up to it')
+    run(skin, "Key('ctrl+tab')")
+    t.check(num(skin, 'FocusOn') == 0, 'switching tabs should take the outline away')
+
+    for _, tab in ipairs(TABS) do
+      run(skin, "ShowTab('" .. tab .. "')")
+      if openAList(skin) then break end
+    end
+    if listOpen(skin) then
+      run(skin, "Key('tab')")
+      t.check(not listOpen(skin), 'Tab should close an open list')
+      t.check(focused(skin) ~= nil, 'Tab with a list open should still outline a button')
+    end
   end },
 
   { 'the keys do nothing while a text box is open', function(t)

@@ -184,6 +184,7 @@ local function showDimmed()
 end
 
 local showProfiles   -- defined with the profiles, below
+local drawFocus, clearFocus   -- defined with the keyboard, at the end
 
 local function show()
   for _, r in ipairs(ROWS) do
@@ -208,6 +209,7 @@ local function show()
     SKIN:Bang('!SetVariable', 'WTileFont' .. i, SKIN:GetVariable(on and 'ColorMain' or 'ColorSub'))
   end
   SKIN:Bang('!UpdateMeter', '*')
+  if drawFocus then drawFocus() end   -- a new value can change its button's width, or dim the focused row
   SKIN:Bang('!Redraw')
 end
 
@@ -302,6 +304,7 @@ end
 
 function ShowTab(name)
   if ddKey then CloseDropdown() end
+  if clearFocus then clearFocus() end
   for i, t in ipairs(TABS) do
     local on = (t == name)
     SKIN:Bang(on and '!ShowMeterGroup' or '!HideMeterGroup', 'Tab' .. t)
@@ -992,8 +995,8 @@ end
 
 -- ---------- keyboard ----------
 -- Rainmeter gives skins no key presses, so Loopscape.exe (SettingsKeys.cs) catches these keys while the panel is the
--- active window and calls Key with the key's name: up, down, pageup, pagedown, home, end, enter, escape, ctrl+tab and
--- ctrl+shift+tab. Without Loopscape running, the panel works with the mouse only.
+-- active window and calls Key with the key's name: tab, shift+tab, up, down, pageup, pagedown, home, end, enter, space,
+-- escape, ctrl+tab and ctrl+shift+tab. Without Loopscape running, the panel works with the mouse only.
 
 -- Lights item i of the open list, the way hovering over it does
 local function lightItem(i)
@@ -1040,11 +1043,103 @@ local function nextTab(dir)
   ShowTab(TABS[1])
 end
 
+-- Tab and Shift+Tab move an outline (MeterFocus, in the scrolling container) through the current tab's value buttons
+-- and tiles in reading order, wrapping around; Enter or Space does what a click on the outlined one does
+local focusName = nil   -- the outlined meter, or nil
+
+-- The current tab's value buttons and tiles, top to bottom and left to right, in the container's coordinates. Dimmed
+-- rows are left out, since a click on them does nothing.
+local function focusable()
+  local tab = 'Tab' .. SKIN:GetVariable('Tab', 'Wallpaper')
+  local probe = SKIN:GetMeter('MeterScrollProbe')
+  local probeX = probe and probe:GetX() or 0
+  local list = {}
+  local function take(name, dims)
+    local m = SKIN:GetMeter(name)
+    if not m or m:GetOption('Group') ~= tab or m:GetOption('LeftMouseUpAction') == '' then return end
+    if dims and isDimmed(name) then return end
+    list[#list + 1] = { name = name, x = m:GetX() - probeX, y = ScreenY(m) + scrollY, w = m:GetW(), h = m:GetH() }
+  end
+  for n = 1, 40 do take('MeterVal' .. n, true) end
+  for i = 1, #TILES do take('MeterTile' .. i) end
+  for i = 1, #WIDGET_TILES do take('MeterWTile' .. i) end
+  table.sort(list, function(a, b)
+    if a.y ~= b.y then return a.y < b.y end
+    return a.x < b.x
+  end)
+  return list
+end
+
+local function focusedItem()
+  if not focusName then return nil end
+  for _, item in ipairs(focusable()) do
+    if item.name == focusName then return item end
+  end
+end
+
+-- Draws the outline 3 px outside the focused meter, or hides it when nothing is focused (or the focused row was dimmed)
+drawFocus = function()
+  local item = focusedItem()
+  if not item then focusName = nil end
+  SKIN:Bang('!SetVariable', 'FocusOn', item and 1 or 0)
+  if item then
+    SKIN:Bang('!SetVariable', 'FocusX', item.x - 3)
+    SKIN:Bang('!SetVariable', 'FocusY', item.y - 3)
+    SKIN:Bang('!SetVariable', 'FocusW', item.w + 6)
+    SKIN:Bang('!SetVariable', 'FocusH', item.h + 6)
+  end
+  SKIN:Bang('!UpdateMeter', 'MeterFocus')
+  SKIN:Bang('!Redraw')
+end
+
+clearFocus = function()
+  if not focusName then return end
+  focusName = nil
+  drawFocus()
+end
+
+-- Scrolls just enough to bring a focused item, with a little room around it, between ViewTop and ViewBottom
+local function scrollToItem(item)
+  if scrollMax <= 0 then return end
+  local room, top, bottom = 10, formula('ViewTop'), formula('ViewBottom')
+  local before = scrollY
+  if item.y - room - scrollY < top then scrollY = item.y - room - top
+  elseif item.y + item.h + room - scrollY > bottom then scrollY = item.y + item.h + room - bottom end
+  if scrollY ~= before then applyScroll() end
+end
+
+local function moveFocus(dir)
+  if ddKey then CloseDropdown() end
+  local list = focusable()
+  if #list == 0 then return end
+  local at = 0
+  for i, item in ipairs(list) do
+    if item.name == focusName then at = i end
+  end
+  if at == 0 then at = dir > 0 and 1 or #list else at = (at - 1 + dir) % #list + 1 end
+  focusName = list[at].name
+  scrollToItem(list[at])
+  drawFocus()
+end
+
+-- Runs the focused meter's click action, exactly as a click would
+local function activateFocus()
+  local item = focusedItem()
+  if not item then return end
+  local click = SKIN:GetMeter(item.name):GetOption('LeftMouseUpAction')
+  if click ~= '' then SKIN:Bang(click) end
+  drawFocus()
+end
+
 function Key(name)
   if editing then return end   -- (the text box has the keys: Loopscape sends none while it is open)
   if name == 'ctrl+tab' then nextTab(1)
   elseif name == 'ctrl+shift+tab' then nextTab(-1)
-  elseif ddKey then listKey(name)
+  elseif name == 'tab' then moveFocus(1)
+  elseif name == 'shift+tab' then moveFocus(-1)
+  elseif ddKey then listKey(name == 'space' and 'enter' or name)
+  elseif name == 'enter' or name == 'space' then activateFocus()
+  elseif name == 'escape' then clearFocus()
   else scrollKey(name)
   end
 end

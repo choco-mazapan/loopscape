@@ -48,6 +48,12 @@ A 'ScrollY=0'
 A 'ScrollOn=0'
 A 'ScrollThumbY=0'
 A 'ScrollThumbH=0'
+A '; Keyboard focus: the outline Tab moves between values and tiles. settings.lua sets FocusOn and the outline''s box'
+A 'FocusOn=0'
+A 'FocusX=0'
+A 'FocusY=0'
+A 'FocusW=0'
+A 'FocusH=0'
 A '; Widgets tab: where its setting rows start (below the widget tiles)'
 A 'WRowsY=100'
 A 'LabelW=250'
@@ -374,6 +380,13 @@ for ($i = 0; $i -lt $widgets.Count; $i++) {
   A "LeftMouseUpAction=[!CommandMeasure MeasureSettings `"ToggleWidget($n)`"]"
   A ''
 }
+
+# ---- keyboard focus ----
+A '; ----- keyboard focus: an outline around the value or tile that Tab moved to (settings.lua Key). In the container, after'
+A '; everything else in it, so it scrolls with the rows and draws over them -----'
+A '[MeterFocus]'; A 'Meter=Shape'; A 'Container=MeterScrollView'; A 'Hidden=(1-#FocusOn#)'; A 'X=#FocusX#'; A 'Y=#FocusY#'
+A 'Shape=Rectangle 1,1,(#FocusW#-2),(#FocusH#-2),7 | Fill Color 0,0,0,0 | StrokeWidth 2 | Stroke Color #ColorMain#'
+A 'DynamicVariables=1'; A ''
 
 # ---- scroll bar ----
 A '; ----- scroll bar: shown while the tab is taller than the panel. Click the track to jump there; the wheel scrolls too -----'
