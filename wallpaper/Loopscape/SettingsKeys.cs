@@ -15,12 +15,15 @@ static partial class Loopscape
         public PanelKey(string name, uint mods, uint vk) { Name = name; Mods = mods; Vk = vk; }
     }
     const uint MOD_CONTROL = 0x2, MOD_SHIFT = 0x4, MOD_NOREPEAT = 0x4000;
-    // The arrows and Page Up/Down repeat while held, so holding one keeps scrolling
+    // The arrows, Page Up/Down and Tab repeat while held, so holding one keeps scrolling or moving the outline. Tab and
+    // Ctrl+Tab are separate hotkeys: RegisterHotKey matches the modifiers exactly.
     static readonly PanelKey[] SettingsPanelKeys = {
+        new PanelKey("tab", 0, 0x09), new PanelKey("shift+tab", MOD_SHIFT, 0x09),
         new PanelKey("up", 0, 0x26), new PanelKey("down", 0, 0x28),
         new PanelKey("pageup", 0, 0x21), new PanelKey("pagedown", 0, 0x22),
         new PanelKey("home", MOD_NOREPEAT, 0x24), new PanelKey("end", MOD_NOREPEAT, 0x23),
-        new PanelKey("enter", MOD_NOREPEAT, 0x0D), new PanelKey("escape", MOD_NOREPEAT, 0x1B),
+        new PanelKey("enter", MOD_NOREPEAT, 0x0D), new PanelKey("space", MOD_NOREPEAT, 0x20),
+        new PanelKey("escape", MOD_NOREPEAT, 0x1B),
         new PanelKey("ctrl+tab", MOD_CONTROL, 0x09), new PanelKey("ctrl+shift+tab", MOD_CONTROL | MOD_SHIFT, 0x09),
     };
     // Hotkey ids for this thread (the next-style hotkey uses 1 on its own thread)
